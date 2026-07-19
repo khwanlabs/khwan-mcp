@@ -1,0 +1,25 @@
+{
+  "//": "Merge this into your project's .claude/settings.json. Adjust the absolute paths to where you cloned khwan-mcp, and export KHWAN_API_KEY (+ optional KHWAN_CORE / KHWAN_USER / KHWAN_BASE_URL) in your shell first. This is the deterministic 'memory on every turn' setup — it does NOT require the MCP server.",
+  "hooks": {
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 /ABSOLUTE/PATH/TO/khwan-mcp/examples/claude-code-hooks/khwan_prepare_hook.py"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 /ABSOLUTE/PATH/TO/khwan-mcp/examples/claude-code-hooks/khwan_record_hook.py"
+          }
+        ]
+      }
+    ]
+  }
+}
