@@ -31,18 +31,26 @@ from khwan import Khwan, KhwanError, Turn
 from mcp.server.fastmcp import FastMCP
 
 INSTRUCTIONS = """\
-Khwan is this session's long-term memory. It does NOT run a model — you do.
+Khwan is DURABLE, cross-session memory for this account. It does NOT run a model
+— you do. Use it to carry knowledge ACROSS sessions, not to re-inject memory on
+every turn (a caching host like Claude Code already makes within-session history
+cheap, so per-turn injection here adds tokens without saving them).
 
-For any turn where remembering (or being remembered) matters, follow the loop:
-  1. Call `khwan_prepare(input=<the user's message>)` BEFORE you answer.
-     Ground your answer in the returned `context` and honor `allowed`/`reason`.
-  2. Answer the user (you are the model).
-  3. Call `khwan_record(turn_token=<from step 1>, answer=<your answer>)` AFTER
-     you answer, so Khwan can persist and learn.
+Recommended usage:
 
-Always pass the exact `turn_token` you received from `khwan_prepare` back into
-`khwan_record` — do not invent or reuse one. Skip the loop only for trivial
-turns with nothing worth remembering.
+- SEED (read): At the start of a session — or when you spawn a subagent, or need
+  a fact that has scrolled out of context — call `khwan_recall(query=<task/topic>)`
+  ONCE to pull a COMPACT set of relevant remembered facts, and ground your work
+  in them. This is the token-smart entry point: a fresh, bounded context instead
+  of replaying a whole transcript.
+- REMEMBER (write): When a durable fact, preference, or decision emerges that
+  should outlive this session's context window, call `khwan_remember(fact=<it>)`.
+
+- FULL LOOP (for custom agents / non-caching hosts): `khwan_prepare(input)` → you
+  answer grounded in the returned context → `khwan_record(turn_token, answer)`.
+  This bounds per-turn cost by replacing history with distilled memory — a real
+  win when the host does NOT cache. On a caching host, prefer recall + remember.
+  Always pass back the exact `turn_token` from `khwan_prepare`; never invent one.
 """
 
 mcp = FastMCP("khwan", instructions=INSTRUCTIONS)
@@ -126,6 +134,71 @@ def khwan_record(turn_token: str, answer: str) -> Dict[str, Any]:
         return _kw().record(Turn({"turn_token": turn_token}), answer)
     except KhwanError as e:
         raise RuntimeError(f"khwan record failed ({e.status}): {e}") from e
+
+
+@mcp.tool()
+def khwan_recall(query: str, limit: int = 8) -> Dict[str, Any]:
+    """SEED a session/subagent with a COMPACT, bounded set of relevant memories.
+
+    The token-smart entry point for a caching host (Claude Code, Claude Desktop):
+    call it ONCE at the start of a session or subagent — or when you need a fact
+    that has scrolled out of context — NOT on every turn. It returns only the
+    relevant facts (not Khwan's full prepared prompt), so you seed a fresh,
+    bounded context instead of replaying a transcript. No model is called.
+
+    Args:
+        query: the task or topic to recall memory for.
+        limit: max facts to return (default 8).
+
+    Returns:
+        facts:     [{you_said, khwan_knows}] — the relevant remembered exchanges.
+        count:     how many facts were returned.
+        seed_text: a ready-to-drop-in memory block for a subagent's brief ("" if none).
+    """
+    try:
+        turn = _kw().prepare(query)
+    except KhwanError as e:
+        raise RuntimeError(f"khwan recall failed ({e.status}): {e}") from e
+    facts: List[Dict[str, Any]] = []
+    for s in (turn.sources or [])[:limit]:
+        if isinstance(s, dict) and s.get("response"):
+            facts.append({"you_said": s.get("input"), "khwan_knows": s.get("response")})
+    seed_lines = []
+    for f in facts:
+        you, khwan = (f["you_said"] or "").strip(), (f["khwan_knows"] or "").strip()
+        # A fact stored via khwan_remember has you == khwan → show it once, not "X → X".
+        seed_lines.append(f"- {khwan}" if not you or you == khwan
+                          else f"- {you} → {khwan}")
+    seed_text = ("Relevant memory (recalled from Khwan):\n" + "\n".join(seed_lines)
+                 if seed_lines else "")
+    return {"query": query, "facts": facts, "count": len(facts), "seed_text": seed_text}
+
+
+@mcp.tool()
+def khwan_remember(fact: str) -> Dict[str, Any]:
+    """Persist a durable fact/preference so FUTURE sessions can recall it.
+
+    A convenience over the prepare→record loop for the common "just remember this"
+    case: it stores ``fact`` in the brain (no model call) so it outlives this
+    session's context window and is available to the next ``khwan_recall``. Use it
+    when a durable preference, decision, or fact emerges.
+
+    Args:
+        fact: the durable fact/preference to store.
+
+    Returns:
+        stored: whether the fact was persisted; reason when not.
+    """
+    kw = _kw()
+    try:
+        turn = kw.prepare(fact)
+        if not turn.turn_token:
+            return {"stored": False, "reason": turn.reason or "brain gate declined the turn"}
+        kw.record(turn, fact)
+    except KhwanError as e:
+        raise RuntimeError(f"khwan remember failed ({e.status}): {e}") from e
+    return {"stored": True, "contradicted_memory": bool(turn._d.get("contradiction"))
+            if hasattr(turn, "_d") else None}
 
 
 @mcp.tool()
