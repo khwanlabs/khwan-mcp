@@ -1,0 +1,7 @@
+{
+  "//": "Claude Code project directory (from ~/.claude/projects/) -> Khwan core slug. Several directories may share one core. Create every core in the dashboard FIRST — an unknown core answers 404.",
+
+  "-Users-you-Desktop-acme-web": "acme",
+  "-Users-you-Desktop-acme-api": "acme",
+  "-Users-you-Desktop-side-project": "side"
+}

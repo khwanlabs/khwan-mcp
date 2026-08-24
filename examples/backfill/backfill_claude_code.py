@@ -1,0 +1,257 @@
+#!/usr/bin/env python3
+"""Seed a Khwan core from Claude Code transcripts you have already produced.
+
+Khwan only knows what it was told. If you have been working in Claude Code for
+months, all of that is sitting in ``~/.claude/projects/<slug>/*.jsonl`` and the
+brain has never seen a line of it. This walks those transcripts, distils each
+turn into a durable fact, and replays them through ``prepare`` → ``record``.
+
+No model is called — the distillation is deterministic (tool_use blocks, not
+prose), and Khwan itself never runs a model.
+
+    # look, change nothing (default)
+    python3 backfill_claude_code.py --map cores.json
+
+    # actually write, one project at a time
+    python3 backfill_claude_code.py --map cores.json --project Khwan --commit
+
+``cores.json`` maps a Claude Code project directory to the core to seed:
+
+    {"-Users-you-Desktop-acme-web": "acme", "-Users-you-Desktop-side-project": "side"}
+
+Cores are NOT auto-created — create each one in the dashboard first, or the API
+answers 404 "unknown core".
+
+Env: KHWAN_API_KEY (required), KHWAN_BASE_URL (optional).
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import re
+import sys
+import time
+from pathlib import Path
+from typing import Iterator, Optional
+
+PROJECTS = Path.home() / ".claude" / "projects"
+
+# Commands worth remembering — state changes, not lookups. A `grep` tells you
+# nothing six months from now; a `git push` or an `alembic upgrade` does.
+SUBSTANTIVE = re.compile(
+    r"\b(git (commit|push|merge|tag|revert|rebase)|gh (pr|release|issue)|"
+    r"npm (publish|run build)|pip install|docker|railway|vercel|fly deploy|"
+    r"alembic|psql|terraform|pytest|make )\b"
+)
+
+
+# ── distillation ──────────────────────────────────────────────────────────────
+
+def turns(path: Path) -> Iterator[tuple[str, list]]:
+    """Yield (user_text, events) per human turn, in transcript order."""
+    cur_user: Optional[str] = None
+    events: list = []
+    try:
+        raw = path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return
+    for line in raw.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            entry = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        msg = entry.get("message")
+        if not isinstance(msg, dict) or not msg.get("role"):
+            continue
+        content = msg.get("content")
+        blocks = content if isinstance(content, list) else [
+            {"type": "text", "text": content or ""}]
+
+        if msg["role"] == "user":
+            # A tool_result comes back under role=user — not a new human turn.
+            if any(isinstance(b, dict) and b.get("type") == "tool_result"
+                   for b in blocks):
+                continue
+            text = " ".join(
+                b.get("text", "") for b in blocks
+                if isinstance(b, dict) and b.get("type") == "text"
+            ).strip()
+            # Skip hook/system injections (<khwan-memory>, <system-reminder>, …).
+            if not text or text.startswith("<"):
+                continue
+            if cur_user and events:
+                yield cur_user, events
+            cur_user, events = text, []
+            continue
+
+        for b in blocks:
+            if not isinstance(b, dict):
+                continue
+            if b.get("type") == "tool_use":
+                inp = b.get("input") or {}
+                name = b.get("name")
+                if name in ("Edit", "Write", "NotebookEdit") and inp.get("file_path"):
+                    events.append(("edit", inp["file_path"]))
+                elif name == "Bash":
+                    cmd = (inp.get("command") or "").strip()
+                    if SUBSTANTIVE.search(cmd):
+                        events.append(("ran", cmd.splitlines()[0][:160]))
+            elif b.get("type") == "text" and (b.get("text") or "").strip():
+                events.append(("said", b["text"].strip()))
+    if cur_user and events:
+        yield cur_user, events
+
+
+def distil(user_text: str, events: list, repo_root: str = "") -> Optional[tuple[str, str]]:
+    """(ask, outcome) for a turn that changed something — else None.
+
+    A turn that only answered a question leaves nothing durable behind; storing
+    it would just add a near-neighbour for future queries to trip over.
+    """
+    files = sorted({v for k, v in events if k == "edit"})
+    ran = list(dict.fromkeys(v for k, v in events if k == "ran"))
+    said = [v for k, v in events if k == "said"]
+    if not files and not ran:
+        return None
+
+    if repo_root:
+        files = [f[len(repo_root):].lstrip("/") if f.startswith(repo_root) else f
+                 for f in files]
+    parts = []
+    if files:
+        parts.append("FILES: " + ", ".join(files[:8])
+                     + (f" (+{len(files) - 8} more)" if len(files) > 8 else ""))
+    if ran:
+        parts.append("RAN: " + " | ".join(ran)[:300])
+    if said:
+        parts.append("OUTCOME: " + said[-1][:600])
+    return user_text[:400], "\n".join(parts)
+
+
+# ── replay ────────────────────────────────────────────────────────────────────
+
+def ledger_path(core: str) -> Path:
+    return Path.home() / ".khwan" / f"backfill-{core}.jsonl"
+
+
+def already_done(core: str) -> set[str]:
+    """Turn keys this core has already ingested — makes a re-run a no-op."""
+    p = ledger_path(core)
+    if not p.exists():
+        return set()
+    done = set()
+    for line in p.read_text(encoding="utf-8").splitlines():
+        try:
+            done.add(json.loads(line)["key"])
+        except (json.JSONDecodeError, KeyError):
+            continue
+    return done
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--map", required=True, help="JSON: {project_dir: core_slug}")
+    ap.add_argument("--project", help="only this project dir (substring match)")
+    ap.add_argument("--commit", action="store_true",
+                    help="actually write to Khwan (default: dry run)")
+    # Each turn costs TWO operations (prepare + record), so turns/sec must stay
+    # at half the plan's ops/sec or the server starts answering 429.
+    ap.add_argument("--rate", type=float, default=1.0,
+                    help="turns/sec; each turn = 2 ops. free=1, starter=5, pro=25")
+    ap.add_argument("--limit", type=int, help="stop after N turns (try a slice first)")
+    args = ap.parse_args()
+
+    mapping: dict[str, str] = json.loads(Path(args.map).read_text(encoding="utf-8"))
+    if args.commit and not os.environ.get("KHWAN_API_KEY"):
+        print("KHWAN_API_KEY is not set.", file=sys.stderr)
+        return 2
+
+    Khwan = None
+    if args.commit:
+        from khwan import Khwan as _K, KhwanError  # noqa: F401
+        Khwan = _K
+
+    grand = {"seen": 0, "durable": 0, "sent": 0, "skipped": 0, "refused": 0}
+
+    for proj_dir, core in sorted(mapping.items()):
+        if args.project and args.project not in proj_dir:
+            continue
+        proj = PROJECTS / proj_dir
+        if not proj.is_dir():
+            print(f"!! {proj_dir}: no such project directory", file=sys.stderr)
+            continue
+
+        # Oldest session first: Khwan ranks by similarity × confidence, and a
+        # later turn correcting an earlier one must land AFTER it to win.
+        sessions = sorted(proj.glob("*.jsonl"), key=lambda p: p.stat().st_mtime)
+        repo_root = "/" + proj_dir.strip("-").replace("-", "/")
+        done = already_done(core)
+        kw = Khwan(api_key=os.environ["KHWAN_API_KEY"], core=core) if args.commit else None
+        led = ledger_path(core)
+        if args.commit:
+            led.parent.mkdir(parents=True, exist_ok=True)
+
+        n_sent = n_skip = n_ref = n_dur = n_seen = 0
+        for sess in sessions:
+            for i, (user_text, events) in enumerate(turns(sess)):
+                n_seen += 1
+                pair = distil(user_text, events, repo_root)
+                if not pair:
+                    continue
+                n_dur += 1
+                ask, outcome = pair
+                key = f"{sess.stem}:{i}"
+                if key in done:
+                    n_skip += 1
+                    continue
+                if args.limit and n_sent >= args.limit:
+                    break
+                if not args.commit:
+                    n_sent += 1
+                    continue
+                try:
+                    turn = kw.prepare(ask)
+                    if not turn.turn_token:
+                        # Coherence gate declined this turn — nothing to record.
+                        n_ref += 1
+                        continue
+                    kw.record(turn, outcome)
+                except Exception as e:            # keep going; log and move on
+                    print(f"   !! {key}: {e}", file=sys.stderr)
+                    n_ref += 1
+                    continue
+                with led.open("a", encoding="utf-8") as f:
+                    f.write(json.dumps({"key": key, "ask": ask[:120]},
+                                       ensure_ascii=False) + "\n")
+                n_sent += 1
+                time.sleep(1.0 / args.rate)
+            if args.limit and n_sent >= args.limit:
+                break
+
+        verb = "would send" if not args.commit else "sent"
+        print(f"{core:12s} ← {proj_dir[:44]:44s} "
+              f"turns {n_seen:5d}  durable {n_dur:5d}  {verb} {n_sent:5d}"
+              f"  skip(done) {n_skip:4d}  refused {n_ref:3d}")
+        for k, v in (("seen", n_seen), ("durable", n_dur), ("sent", n_sent),
+                     ("skipped", n_skip), ("refused", n_ref)):
+            grand[k] += v
+
+    print("-" * 100)
+    print(f"TOTAL  turns {grand['seen']}  durable {grand['durable']}  "
+          f"{'would send' if not args.commit else 'sent'} {grand['sent']}  "
+          f"skip {grand['skipped']}  refused {grand['refused']}")
+    if not args.commit:
+        print("\nDry run — nothing was written. Add --commit to send.")
+        mins = grand["sent"] / args.rate / 60
+        print(f"Cost if committed: {grand['sent'] * 2} operations "
+              f"(prepare+record), ~{mins:.0f} min at --rate {args.rate}.")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
