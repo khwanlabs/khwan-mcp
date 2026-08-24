@@ -37,11 +37,79 @@ pip install khwan-mcp          # or: uvx khwan-mcp
 ## Connect to Claude Code
 
 ```bash
-claude mcp add khwan \
-  -e KHWAN_API_KEY=kwk_live_xxx \
+claude mcp add khwan --scope project \
   -e KHWAN_CORE=default \
   -- khwan-mcp
 ```
+
+`--scope project` writes `.mcp.json` into the repo, so the setting travels with
+the project. Note what is **not** in that command: the key.
+
+### Keeping the key out of the repo
+
+`claude mcp add -e KHWAN_API_KEY=…` writes the literal value into `.mcp.json` —
+a file whose whole point is being committed. Two ways to avoid that, and the
+second is the one that works everywhere:
+
+**Shell environment.** Leave `KHWAN_API_KEY` out of the config entirely and
+export it in the shell that launches `claude`. The server inherits it.
+
+```bash
+export KHWAN_API_KEY=kwk_live_xxx
+```
+
+**A launcher (works in the desktop app too).** A desktop app is started from a
+dock or menu, not a login shell, so it inherits none of your shell exports and
+the approach above silently yields no key. Read it from a file instead:
+
+```bash
+mkdir -p ~/.khwan && chmod 700 ~/.khwan
+printf 'KHWAN_API_KEY=kwk_live_xxx\n' > ~/.khwan/env && chmod 600 ~/.khwan/env
+
+cat > ~/.khwan/khwan-mcp <<'SH'
+#!/bin/sh
+set -a
+[ -f "$HOME/.khwan/env" ] && . "$HOME/.khwan/env"
+set +a
+exec khwan-mcp "$@"
+SH
+chmod 700 ~/.khwan/khwan-mcp
+```
+
+Then point the config at the launcher and keep only non-secret settings inline:
+
+```bash
+claude mcp add khwan --scope project \
+  -e KHWAN_CORE=acme -e KHWAN_USER=Web \
+  -- ~/.khwan/khwan-mcp
+```
+
+`.mcp.json` is now safe to commit, and every new repo costs two lines instead of
+a pasted key. Anyone else on the team writes their own `~/.khwan/env`.
+
+## One brain per project
+
+Memory is only useful if the right project's memory comes back. Two axes, and
+both give **complete** isolation:
+
+| | selected by | costs |
+|---|---|---|
+| **core** | `KHWAN_CORE` | one of your plan's cores |
+| **sub-brain** | `KHWAN_USER` (with a core) | nothing — unlimited on paid plans |
+
+A sub-brain is a full separate brain, not a filter: `account::acme::@Web` shares
+nothing with `account::acme::@Api`. So a client with several repositories can be
+one core with a sub-brain each, rather than a core each:
+
+```bash
+# in ~/code/acme-web
+claude mcp add khwan --scope project -e KHWAN_CORE=acme -e KHWAN_USER=Web -- ~/.khwan/khwan-mcp
+# in ~/code/acme-api
+claude mcp add khwan --scope project -e KHWAN_CORE=acme -e KHWAN_USER=Api -- ~/.khwan/khwan-mcp
+```
+
+Cores must exist before you point at one — an unknown core answers 404. Create
+them in the dashboard. Sub-brains are created on first write.
 
 ### Recommended pattern (token-smart)
 
@@ -70,21 +138,27 @@ instead of the whole transcript:
 
 ## Connect to Claude Desktop
 
-Add to `claude_desktop_config.json`:
+Claude Desktop and Claude Code keep **separate** MCP configuration — a server
+added to one is invisible to the other, and `claude mcp add` does not touch this
+file. Add to `claude_desktop_config.json`:
 
 ```json
 {
   "mcpServers": {
     "khwan": {
-      "command": "khwan-mcp",
+      "command": "/Users/you/.khwan/khwan-mcp",
       "env": {
-        "KHWAN_API_KEY": "kwk_live_xxx",
-        "KHWAN_CORE": "default"
+        "KHWAN_CORE": "acme",
+        "KHWAN_USER": "Web"
       }
     }
   }
 }
 ```
+
+Use an absolute path: a desktop app does not get your shell's `PATH` either, so
+a bare `khwan-mcp` may not resolve. One core is selected for the whole app —
+there is no per-project switch here, so choose a broad one.
 
 ## Configuration (environment)
 
@@ -109,6 +183,32 @@ Add to `claude_desktop_config.json`:
 `khwan_recall` / `khwan_remember` are the token-smart pair for a caching host;
 `khwan_prepare` / `khwan_record` are the full loop for custom agents (pass the
 exact `turn_token` from prepare back into record).
+
+### What comes back, and what an empty answer means
+
+`khwan_recall` returns at most **three** facts — that ceiling is the server's,
+so `limit` can lower it but not raise it — plus any `lessons` synthesis has
+distilled from many past turns. Lessons lead the `seed_text`: a rule earned over
+months outranks a single turn that happens to sit nearby in the index.
+
+Retrieval applies a relevance floor, so **an empty `facts` is an answer**: the
+brain has nothing close to this question. Read it as "not known here" rather than
+as a failure, and do not fill the gap by leaning on whichever fact was nearest.
+
+The floor is deliberately loose, because a memory wrongly dropped is invisible
+while a memory wrongly kept is not. Expect a returned fact to be *plausibly*
+related, not certainly relevant — read it before relying on it.
+
+## Seeding a brain from work you have already done
+
+A new brain knows nothing, so its first weeks of recall are thin — while the
+answers are often already sitting in the host's own transcripts, unread.
+[`examples/backfill/`](examples/backfill/) replays Claude Code transcripts into a
+brain: deterministic, no model calls, dry-run by default.
+
+```bash
+python3 examples/backfill/backfill_claude_code.py --map cores.json
+```
 
 ## Always-on memory (Claude Code hooks)
 
