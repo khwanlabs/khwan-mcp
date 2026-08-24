@@ -85,6 +85,16 @@ def _kw() -> Khwan:
     return _kw_cache
 
 
+def _lessons(turn: Turn) -> List[str]:
+    """Synthesised rules for this turn.
+
+    Read off the raw Turn dict: the hosted client has no `lessons` property yet,
+    and an older engine simply omits the key.
+    """
+    raw = turn.raw() if hasattr(turn, "raw") else {}
+    return [str(x) for x in (raw.get("lessons") or []) if str(x).strip()]
+
+
 @mcp.tool()
 def khwan_prepare(input: str) -> Dict[str, Any]:
     """Pull the memory-enriched context for a turn BEFORE you answer.
@@ -110,6 +120,7 @@ def khwan_prepare(input: str) -> Dict[str, Any]:
         raise RuntimeError(f"khwan prepare failed ({e.status}): {e}") from e
     return {
         "context": turn.messages,
+        "lessons": _lessons(turn),
         "coherence": turn.coherence,
         "allowed": turn.allowed,
         "reason": turn.reason,
@@ -151,15 +162,16 @@ def khwan_recall(query: str, limit: int = 3) -> Dict[str, Any]:
     - **Three facts is the ceiling.** The server ranks a wider candidate pool and
       keeps its top three, so `limit` can only narrow that further, never widen
       it. It defaulted to 8, which read like a request for eight.
-    - **Synthesised lessons are not included.** They reach the model through the
-      prepared prompt, which this tool deliberately does not return, so what you
-      get here is recalled raw exchanges only.
+    Lessons — what synthesis distilled from many turns — come back alongside the
+    raw exchanges, and lead the seed text: a rule earned over months outranks any
+    single turn that happens to be nearby in the index.
 
     Args:
         query: the task or topic to recall memory for.
         limit: cap on facts returned; the server's own ceiling is 3.
 
     Returns:
+        lessons:   rules synthesis distilled from many past turns.
         facts:     [{you_said, khwan_knows}] — the relevant remembered exchanges.
         count:     how many facts were returned.
         seed_text: a ready-to-drop-in memory block for a subagent's brief ("" if none).
@@ -178,9 +190,16 @@ def khwan_recall(query: str, limit: int = 3) -> Dict[str, Any]:
         # A fact stored via khwan_remember has you == khwan → show it once, not "X → X".
         seed_lines.append(f"- {khwan}" if not you or you == khwan
                           else f"- {you} → {khwan}")
-    seed_text = ("Relevant memory (recalled from Khwan):\n" + "\n".join(seed_lines)
-                 if seed_lines else "")
-    return {"query": query, "facts": facts, "count": len(facts), "seed_text": seed_text}
+    lessons = _lessons(turn)
+    blocks = []
+    if lessons:
+        # First, and labelled: these are standing rules, not one recalled turn.
+        blocks.append("What Khwan has learned (applies generally):\n"
+                      + "\n".join(f"- {l}" for l in lessons))
+    if seed_lines:
+        blocks.append("Relevant memory (recalled from Khwan):\n" + "\n".join(seed_lines))
+    return {"query": query, "lessons": lessons, "facts": facts,
+            "count": len(facts), "seed_text": "\n\n".join(blocks)}
 
 
 @mcp.tool()
