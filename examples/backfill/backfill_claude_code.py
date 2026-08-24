@@ -40,6 +40,9 @@ PROJECTS = Path.home() / ".claude" / "projects"
 
 # Commands worth remembering — state changes, not lookups. A `grep` tells you
 # nothing six months from now; a `git push` or an `alembic upgrade` does.
+# Scratchpad and temp paths are scaffolding for one turn — never a durable fact.
+TRANSIENT = re.compile(r"^(/private)?/(tmp|var/folders)/|/scratchpad/|/node_modules/")
+
 SUBSTANTIVE = re.compile(
     r"\b(git (commit|push|merge|tag|revert|rebase)|gh (pr|release|issue)|"
     r"npm (publish|run build)|pip install|docker|railway|vercel|fly deploy|"
@@ -98,13 +101,35 @@ def turns(path: Path) -> Iterator[tuple[str, list]]:
                 if name in ("Edit", "Write", "NotebookEdit") and inp.get("file_path"):
                     events.append(("edit", inp["file_path"]))
                 elif name == "Bash":
-                    cmd = (inp.get("command") or "").strip()
-                    if SUBSTANTIVE.search(cmd):
-                        events.append(("ran", cmd.splitlines()[0][:160]))
+                    for cleaned in _commands(inp.get("command") or ""):
+                        events.append(("ran", cleaned))
             elif b.get("type") == "text" and (b.get("text") or "").strip():
                 events.append(("said", b["text"].strip()))
     if cur_user and events:
         yield cur_user, events
+
+
+def _commands(block: str) -> list[str]:
+    """The *kinds* of substantive action in a Bash block — `git push`, `npm run
+    build`, `gh pr` — not the raw command lines.
+
+    Storing raw shell was a losing game: quoting, pipes, heredocs and redirects
+    to temp paths all had to be stripped, and a `|` inside a quoted regex broke
+    every attempt. The exact flags are not what a future session needs to recall;
+    that this turn pushed, built or opened a PR is. Specifics survive in OUTCOME.
+    """
+    out = []
+    for m in SUBSTANTIVE.finditer(block):
+        verb = " ".join(m.group(0).split())
+        if verb not in out:
+            out.append(verb)
+    return out[:4]
+
+
+def _short(path: str) -> str:
+    """Drop the home prefix so a stored fact carries a path, not a machine."""
+    home = str(Path.home())
+    return path[len(home):].lstrip("/") if path.startswith(home) else path
 
 
 def distil(user_text: str, events: list, repo_root: str = "") -> Optional[tuple[str, str]]:
@@ -113,21 +138,20 @@ def distil(user_text: str, events: list, repo_root: str = "") -> Optional[tuple[
     A turn that only answered a question leaves nothing durable behind; storing
     it would just add a near-neighbour for future queries to trip over.
     """
-    files = sorted({v for k, v in events if k == "edit"})
-    ran = list(dict.fromkeys(v for k, v in events if k == "ran"))
+    files = sorted({v for k, v in events if k == "edit"}
+                   - {v for k, v in events if k == "edit" and TRANSIENT.search(v)})
+    ran = [c for c in dict.fromkeys(v for k, v in events if k == "ran") if c]
     said = [v for k, v in events if k == "said"]
     if not files and not ran:
         return None
 
-    if repo_root:
-        files = [f[len(repo_root):].lstrip("/") if f.startswith(repo_root) else f
-                 for f in files]
+    files = [_short(f) for f in files]
     parts = []
     if files:
         parts.append("FILES: " + ", ".join(files[:8])
                      + (f" (+{len(files) - 8} more)" if len(files) > 8 else ""))
     if ran:
-        parts.append("RAN: " + " | ".join(ran)[:300])
+        parts.append("RAN: " + ", ".join(ran))
     if said:
         parts.append("OUTCOME: " + said[-1][:600])
     return user_text[:400], "\n".join(parts)
@@ -156,7 +180,8 @@ def already_done(core: str) -> set[str]:
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--map", required=True, help="JSON: {project_dir: core_slug}")
-    ap.add_argument("--project", help="only this project dir (substring match)")
+    ap.add_argument("--project",
+                    help="only project dirs containing this (case-insensitive)")
     ap.add_argument("--commit", action="store_true",
                     help="actually write to Khwan (default: dry run)")
     # Each turn costs TWO operations (prepare + record), so turns/sec must stay
@@ -179,7 +204,9 @@ def main() -> int:
     grand = {"seen": 0, "durable": 0, "sent": 0, "skipped": 0, "refused": 0}
 
     for proj_dir, core in sorted(mapping.items()):
-        if args.project and args.project not in proj_dir:
+        # Case-insensitive: the directory name mirrors the path on disk, so
+        # "acme" and "Acme" are the same project to anyone typing the flag.
+        if args.project and args.project.lower() not in proj_dir.lower():
             continue
         proj = PROJECTS / proj_dir
         if not proj.is_dir():
