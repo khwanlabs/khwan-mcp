@@ -99,7 +99,7 @@ Add to `claude_desktop_config.json`:
 
 | Tool                              | When                                                              |
 | --------------------------------- | ---------------------------------------------------------------- |
-| `khwan_recall(query, limit=3)`    | **seed** a session/subagent — compact relevant facts + `seed_text`. The server returns at most 3, and no synthesised lessons. |
+| `khwan_recall(query, limit=3)`    | **seed** a session/subagent — synthesised `lessons` + up to 3 relevant facts, as `seed_text`. |
 | `khwan_remember(fact)`            | **persist** a durable fact/preference for future sessions.        |
 | `khwan_prepare(input)`            | full loop, **before** answering — memory context + a `turn_token`. |
 | `khwan_record(turn_token, answer)`| full loop, **after** answering — persists the turn so Khwan learns. |
