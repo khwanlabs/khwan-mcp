@@ -156,7 +156,8 @@ def already_done(core: str) -> set[str]:
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--map", required=True, help="JSON: {project_dir: core_slug}")
-    ap.add_argument("--project", help="only this project dir (substring match)")
+    ap.add_argument("--project",
+                    help="only project dirs containing this (case-insensitive)")
     ap.add_argument("--commit", action="store_true",
                     help="actually write to Khwan (default: dry run)")
     # Each turn costs TWO operations (prepare + record), so turns/sec must stay
@@ -179,7 +180,9 @@ def main() -> int:
     grand = {"seen": 0, "durable": 0, "sent": 0, "skipped": 0, "refused": 0}
 
     for proj_dir, core in sorted(mapping.items()):
-        if args.project and args.project not in proj_dir:
+        # Case-insensitive: the directory name mirrors the path on disk, so
+        # "acme" and "Acme" are the same project to anyone typing the flag.
+        if args.project and args.project.lower() not in proj_dir.lower():
             continue
         proj = PROJECTS / proj_dir
         if not proj.is_dir():
