@@ -228,8 +228,8 @@ def main() -> int:
     total_sent = 0        # across all projects — what --limit counts
 
     for proj_dir, core in sorted(mapping.items()):
-        # Case-insensitive: the directory name mirrors the path on disk, so
-        # "acme" and "Acme" are the same project to anyone typing the flag.
+        # Case-insensitive: the directory name mirrors the path on disk, so its
+        # casing is whatever the folder used, not what anyone types at the flag.
         if args.project and args.project.lower() not in proj_dir.lower():
             continue
         if args.limit and total_sent >= args.limit:
