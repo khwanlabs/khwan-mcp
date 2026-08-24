@@ -29,6 +29,9 @@ outcome:  FILES: components/AuthGate.tsx
 ## Use
 
 ```bash
+# 0. the client, for --commit (a dry run needs nothing)
+pip install khwan
+
 # 1. create every target core in the dashboard first (they are not auto-created)
 # 2. map your project directories to those cores
 cp cores.example.json cores.json && $EDITOR cores.json
