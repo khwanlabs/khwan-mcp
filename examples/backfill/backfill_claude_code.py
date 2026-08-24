@@ -41,7 +41,12 @@ PROJECTS = Path.home() / ".claude" / "projects"
 # Commands worth remembering — state changes, not lookups. A `grep` tells you
 # nothing six months from now; a `git push` or an `alembic upgrade` does.
 # Scratchpad and temp paths are scaffolding for one turn — never a durable fact.
-TRANSIENT = re.compile(r"^(/private)?/(tmp|var/folders)/|/scratchpad/|/node_modules/")
+# ~/.claude/projects/ is Claude Code's own store: its transcripts and its memory
+# files. Recording "this turn edited Claude's memory" as a Khwan memory is a
+# circular fact, and those paths embed the encoded home directory (and with it
+# the username), which survives stripping $HOME from the front.
+TRANSIENT = re.compile(r"^(/private)?/(tmp|var/folders)/|/scratchpad/|/node_modules/"
+                       r"|(^|/)\.claude/(projects|todos|shell-snapshots)/")
 
 SUBSTANTIVE = re.compile(
     r"\b(git (commit|push|merge|tag|revert|rebase)|gh (pr|release|issue)|"
@@ -129,7 +134,14 @@ def _commands(block: str) -> list[str]:
 def _short(path: str) -> str:
     """Drop the home prefix so a stored fact carries a path, not a machine."""
     home = str(Path.home())
-    return path[len(home):].lstrip("/") if path.startswith(home) else path
+    if path.startswith(home):
+        path = path[len(home):].lstrip("/")
+    return re.sub(r"-Users-[^-]+-", "-Users-", path)
+
+
+def _short_text(text: str) -> str:
+    """Same home-stripping, applied to prose — OUTCOME quotes absolute paths."""
+    return text.replace(str(Path.home()) + "/", "~/").replace(str(Path.home()), "~")
 
 
 def distil(user_text: str, events: list, repo_root: str = "") -> Optional[tuple[str, str]]:
@@ -153,7 +165,7 @@ def distil(user_text: str, events: list, repo_root: str = "") -> Optional[tuple[
     if ran:
         parts.append("RAN: " + ", ".join(ran))
     if said:
-        parts.append("OUTCOME: " + said[-1][:600])
+        parts.append("OUTCOME: " + _short_text(said[-1])[:600])
     return user_text[:400], "\n".join(parts)
 
 
