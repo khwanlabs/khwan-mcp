@@ -24,8 +24,19 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
       - run: pip install -e . build twine
-      # An MCP server that cannot be imported is a broken install, not a broken
-      # feature — and it is the first thing `uvx khwan-mcp` does.
+      # Importing the PACKAGE only touches __init__.py, so the 0.2.1 breakage
+      # (mcp 2.0 dropped mcp.server.fastmcp) sailed past a green build. Import the
+      # SERVER module and build the tool list — that is what `uvx khwan-mcp` does.
       - run: python -c "import khwan_mcp; print(khwan_mcp.__version__)"
+      - run: python -c "import khwan_mcp.server as s; print('server ok:', s.mcp.name)"
+      - name: the tools the client will see
+        run: |
+          python - <<'EOF'
+          import asyncio
+          from khwan_mcp.server import mcp
+          names = [t.name for t in asyncio.run(mcp.list_tools())]
+          print("tools:", names)
+          assert "khwan_recall" in names and "khwan_remember" in names, names
+          EOF
       - run: python -m build
       - run: python -m twine check dist/*

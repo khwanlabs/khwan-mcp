@@ -124,4 +124,4 @@ hook injects memory on every prompt and a `Stop` hook records every answer.
 
 ## License
 
-Proprietary — © Khwan Labs.
+MIT — © Khwan Labs. See [LICENSE](LICENSE).
