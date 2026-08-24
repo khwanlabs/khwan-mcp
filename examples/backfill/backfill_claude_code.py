@@ -22,6 +22,9 @@ prose), and Khwan itself never runs a model.
 Cores are NOT auto-created — create each one in the dashboard first, or the API
 answers 404 "unknown core".
 
+Requires the Khwan client for ``--commit`` (``pip install khwan``); a dry run
+needs nothing but the standard library.
+
 Env: KHWAN_API_KEY (required), KHWAN_BASE_URL (optional).
 """
 
@@ -212,7 +215,13 @@ def main() -> int:
 
     Khwan = None
     if args.commit:
-        from khwan import Khwan as _K, KhwanError  # noqa: F401
+        # Imported lazily: a dry run needs no client, and most runs are dry runs.
+        try:
+            from khwan import Khwan as _K
+        except ModuleNotFoundError:
+            print("This needs the Khwan client, which a dry run does not:\n"
+                  "    pip install khwan", file=sys.stderr)
+            return 2
         Khwan = _K
 
     grand = {"seen": 0, "durable": 0, "sent": 0, "skipped": 0, "refused": 0}
