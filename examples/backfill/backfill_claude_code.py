@@ -15,12 +15,19 @@ prose), and Khwan itself never runs a model.
     # actually write, one project at a time
     python3 backfill_claude_code.py --map cores.json --project Khwan --commit
 
-``cores.json`` maps a Claude Code project directory to the core to seed:
+``cores.json`` maps a Claude Code project directory to the brain to seed. A brain
+is a core, optionally narrowed to one end-user sub-brain (``account::core::@user``,
+which is a fully separate brain — same isolation as a core, without spending one):
 
-    {"-Users-you-Desktop-acme-web": "acme", "-Users-you-Desktop-side-project": "side"}
+    {
+      "-Users-you-Desktop-acme-web": {"core": "acme", "user": "Web"},
+      "-Users-you-Desktop-acme-api": {"core": "acme", "user": "Api"},
+      "-Users-you-Desktop-side-project": "side"
+    }
 
 Cores are NOT auto-created — create each one in the dashboard first, or the API
-answers 404 "unknown core".
+answers 404 "unknown core". Sub-brains ARE created on first write, but they are a
+paid-plan feature.
 
 Requires the Khwan client for ``--commit`` (``pip install khwan``); a dry run
 needs nothing but the standard library.
@@ -174,13 +181,29 @@ def distil(user_text: str, events: list, repo_root: str = "") -> Optional[tuple[
 
 # ── replay ────────────────────────────────────────────────────────────────────
 
-def ledger_path(core: str) -> Path:
-    return Path.home() / ".khwan" / f"backfill-{core}.jsonl"
+def brain_of(value) -> dict:
+    """Normalise a cores.json value into {core, user, label}.
+
+    A bare string stays valid — it is a core with no sub-brain.
+    """
+    if isinstance(value, str):
+        return {"core": value, "user": None, "label": value}
+    core = value["core"]
+    user = value.get("user") or None
+    return {"core": core, "user": user, "label": value.get("label") or user or core}
 
 
-def already_done(core: str) -> set[str]:
-    """Turn keys this core has already ingested — makes a re-run a no-op."""
-    p = ledger_path(core)
+def ledger_path(brain: dict) -> Path:
+    """One ledger per BRAIN. Keying it on the core alone would let a re-run skip
+    turns "already sent" that in fact went to a different sub-brain."""
+    name = brain["core"] + (f"__{brain['user']}" if brain["user"] else "")
+    safe = "".join(c if c.isalnum() or c in "-_." else "_" for c in name)
+    return Path.home() / ".khwan" / f"backfill-{safe}.jsonl"
+
+
+def already_done(brain: dict) -> set[str]:
+    """Turn keys this brain has already ingested — makes a re-run a no-op."""
+    p = ledger_path(brain)
     if not p.exists():
         return set()
     done = set()
@@ -227,7 +250,9 @@ def main() -> int:
     grand = {"seen": 0, "durable": 0, "sent": 0, "skipped": 0, "refused": 0}
     total_sent = 0        # across all projects — what --limit counts
 
-    for proj_dir, core in sorted(mapping.items()):
+    for proj_dir, target in sorted(mapping.items()):
+        brain = brain_of(target)
+        core, label = brain["core"], brain["label"]
         # Case-insensitive: the directory name mirrors the path on disk, so its
         # casing is whatever the folder used, not what anyone types at the flag.
         if args.project and args.project.lower() not in proj_dir.lower():
@@ -243,9 +268,14 @@ def main() -> int:
         # later turn correcting an earlier one must land AFTER it to win.
         sessions = sorted(proj.glob("*.jsonl"), key=lambda p: p.stat().st_mtime)
         repo_root = "/" + proj_dir.strip("-").replace("-", "/")
-        done = already_done(core)
-        kw = Khwan(api_key=os.environ["KHWAN_API_KEY"], core=core) if args.commit else None
-        led = ledger_path(core)
+        done = already_done(brain)
+        kw = None
+        if args.commit:
+            kw_args = {"api_key": os.environ["KHWAN_API_KEY"], "core": core}
+            if brain["user"]:
+                kw_args["user_id"] = brain["user"]     # → account::core::@user
+            kw = Khwan(**kw_args)
+        led = ledger_path(brain)
         if args.commit:
             led.parent.mkdir(parents=True, exist_ok=True)
 
@@ -258,6 +288,7 @@ def main() -> int:
                     continue
                 n_dur += 1
                 ask, outcome = pair
+                ask = f"[{label}] {ask}"
                 key = f"{sess.stem}:{i}"
                 if key in done:
                     n_skip += 1
@@ -287,7 +318,7 @@ def main() -> int:
                 # A turn costs seconds of round-trip, so a silent run looks hung.
                 # Report each one, on a single rewritten line.
                 el = time.monotonic() - t_start
-                print(f"\r  {core}: sent {total_sent}"
+                print(f"\r  {label}: sent {total_sent}"
                       + (f"/{args.limit}" if args.limit else "")
                       + f"  ({el / total_sent:.1f}s/turn, {el / 60:.1f} min elapsed)"
                       + " " * 8, end="", file=sys.stderr, flush=True)
@@ -298,7 +329,8 @@ def main() -> int:
         if args.commit and n_sent:
             print("\r" + " " * 78 + "\r", end="", file=sys.stderr)
         verb = "would send" if not args.commit else "sent"
-        print(f"{core:12s} ← {proj_dir[:44]:44s} "
+        shown = core + (f"::@{brain['user']}" if brain["user"] else "")
+        print(f"{shown[:24]:24s} ← {proj_dir[:38]:38s} "
               f"turns {n_seen:5d}  durable {n_dur:5d}  {verb} {n_sent:5d}"
               f"  skip(done) {n_skip:4d}  refused {n_ref:3d}")
         for k, v in (("seen", n_seen), ("durable", n_dur), ("sent", n_sent),

@@ -59,3 +59,13 @@ python3 backfill_claude_code.py --map cores.json --commit --rate 25
 - **Resumable.** Every successful turn is appended to
   `~/.khwan/backfill-<core>.jsonl`; re-running skips what is already in.
 - **Dry run is the default.** Nothing is sent without `--commit`.
+- **One brain per project, without spending a core.** A mapping value can be
+  `{"core": "acme", "user": "Web"}`, which seeds `account::acme::@Web` — a fully
+  separate brain, same isolation as a core. Nightly synthesis covers it: the
+  worker sweeps `SELECT DISTINCT user_id FROM field_packets`, which is every
+  brain key, sub-brains included.
+- **The label is prefixed onto the stored ask** (`[Web] add the awards
+  section…`). Retrieval embeds the ask ALONE — nothing in `FILES:`/`OUTCOME:`
+  reaches the vector — so without the prefix, two sites asking "redo the icon"
+  are indistinguishable to a search, and asking in one repo surfaces the other's
+  work.

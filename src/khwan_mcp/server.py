@@ -137,7 +137,7 @@ def khwan_record(turn_token: str, answer: str) -> Dict[str, Any]:
 
 
 @mcp.tool()
-def khwan_recall(query: str, limit: int = 8) -> Dict[str, Any]:
+def khwan_recall(query: str, limit: int = 3) -> Dict[str, Any]:
     """SEED a session/subagent with a COMPACT, bounded set of relevant memories.
 
     The token-smart entry point for a caching host (Claude Code, Claude Desktop):
@@ -146,9 +146,18 @@ def khwan_recall(query: str, limit: int = 8) -> Dict[str, Any]:
     relevant facts (not Khwan's full prepared prompt), so you seed a fresh,
     bounded context instead of replaying a transcript. No model is called.
 
+    Two limits are worth knowing, because neither is this tool's to set:
+
+    - **Three facts is the ceiling.** The server ranks a wider candidate pool and
+      keeps its top three, so `limit` can only narrow that further, never widen
+      it. It defaulted to 8, which read like a request for eight.
+    - **Synthesised lessons are not included.** They reach the model through the
+      prepared prompt, which this tool deliberately does not return, so what you
+      get here is recalled raw exchanges only.
+
     Args:
         query: the task or topic to recall memory for.
-        limit: max facts to return (default 8).
+        limit: cap on facts returned; the server's own ceiling is 3.
 
     Returns:
         facts:     [{you_said, khwan_knows}] — the relevant remembered exchanges.

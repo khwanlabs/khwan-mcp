@@ -1,7 +1,7 @@
 {
-  "//": "Claude Code project directory (from ~/.claude/projects/) -> Khwan core slug. Several directories may share one core. Create every core in the dashboard FIRST — an unknown core answers 404.",
+  "//": "Claude Code project directory (from ~/.claude/projects/) -> the brain to seed. A value is a core slug, or {core, user} to seed one end-user sub-brain under it (account::core::@user — a fully separate brain that does not spend a core). Optional `label` overrides the prefix put on each stored ask; it defaults to user, else core. Create every CORE in the dashboard FIRST — an unknown core answers 404.",
 
-  "-Users-you-Desktop-acme-web": "acme",
-  "-Users-you-Desktop-acme-api": "acme",
+  "-Users-you-Desktop-acme-web": { "core": "acme", "user": "Web" },
+  "-Users-you-Desktop-acme-api": { "core": "acme", "user": "Api" },
   "-Users-you-Desktop-side-project": "side"
 }
