@@ -1,0 +1,31 @@
+name: build
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# There are no unit tests here yet, so this checks what can honestly be checked:
+# the package imports on every Python it claims to support, and it builds into
+# something twine will accept. The second one is not hypothetical — the 0.2.1
+# release failed on Metadata-Version 2.5, with an error naming metadata when the
+# cause was the build backend.
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # The floor in requires-python, and current.
+        python-version: ["3.10", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - run: pip install -e . build twine
+      # An MCP server that cannot be imported is a broken install, not a broken
+      # feature — and it is the first thing `uvx khwan-mcp` does.
+      - run: python -c "import khwan_mcp; print(khwan_mcp.__version__)"
+      - run: python -m build
+      - run: python -m twine check dist/*
