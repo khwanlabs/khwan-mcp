@@ -200,9 +200,11 @@ def main() -> int:
     # at half the plan's ops/sec or the server starts answering 429.
     ap.add_argument("--rate", type=float, default=1.0,
                     help="turns/sec; each turn = 2 ops. free=1, starter=5, pro=25")
-    ap.add_argument("--limit", type=int, help="stop after N turns (try a slice first)")
+    ap.add_argument("--limit", type=int,
+                    help="stop after N turns IN TOTAL across every matched project")
     args = ap.parse_args()
 
+    t_start = time.monotonic()
     mapping: dict[str, str] = json.loads(Path(args.map).read_text(encoding="utf-8"))
     if args.commit and not os.environ.get("KHWAN_API_KEY"):
         print("KHWAN_API_KEY is not set.", file=sys.stderr)
@@ -214,12 +216,15 @@ def main() -> int:
         Khwan = _K
 
     grand = {"seen": 0, "durable": 0, "sent": 0, "skipped": 0, "refused": 0}
+    total_sent = 0        # across all projects — what --limit counts
 
     for proj_dir, core in sorted(mapping.items()):
         # Case-insensitive: the directory name mirrors the path on disk, so
         # "acme" and "Acme" are the same project to anyone typing the flag.
         if args.project and args.project.lower() not in proj_dir.lower():
             continue
+        if args.limit and total_sent >= args.limit:
+            break
         proj = PROJECTS / proj_dir
         if not proj.is_dir():
             print(f"!! {proj_dir}: no such project directory", file=sys.stderr)
@@ -248,10 +253,11 @@ def main() -> int:
                 if key in done:
                     n_skip += 1
                     continue
-                if args.limit and n_sent >= args.limit:
+                if args.limit and total_sent >= args.limit:
                     break
                 if not args.commit:
                     n_sent += 1
+                    total_sent += 1
                     continue
                 try:
                     turn = kw.prepare(ask)
@@ -268,10 +274,20 @@ def main() -> int:
                     f.write(json.dumps({"key": key, "ask": ask[:120]},
                                        ensure_ascii=False) + "\n")
                 n_sent += 1
+                total_sent += 1
+                # A turn costs seconds of round-trip, so a silent run looks hung.
+                # Report each one, on a single rewritten line.
+                el = time.monotonic() - t_start
+                print(f"\r  {core}: sent {total_sent}"
+                      + (f"/{args.limit}" if args.limit else "")
+                      + f"  ({el / total_sent:.1f}s/turn, {el / 60:.1f} min elapsed)"
+                      + " " * 8, end="", file=sys.stderr, flush=True)
                 time.sleep(1.0 / args.rate)
-            if args.limit and n_sent >= args.limit:
+            if args.limit and total_sent >= args.limit:
                 break
 
+        if args.commit and n_sent:
+            print("\r" + " " * 78 + "\r", end="", file=sys.stderr)
         verb = "would send" if not args.commit else "sent"
         print(f"{core:12s} ← {proj_dir[:44]:44s} "
               f"turns {n_seen:5d}  durable {n_dur:5d}  {verb} {n_sent:5d}"
@@ -286,9 +302,14 @@ def main() -> int:
           f"skip {grand['skipped']}  refused {grand['refused']}")
     if not args.commit:
         print("\nDry run — nothing was written. Add --commit to send.")
-        mins = grand["sent"] / args.rate / 60
+        # Wall clock is set by the prepare+record round trip (~10 s/turn
+        # observed against the hosted engine), not by --rate, whose sleep is a
+        # second at most. Estimating from --rate alone understated a 25-minute
+        # run as 45 seconds.
+        lo, hi = grand["sent"] * 8 / 60, grand["sent"] * 14 / 60
         print(f"Cost if committed: {grand['sent'] * 2} operations "
-              f"(prepare+record), ~{mins:.0f} min at --rate {args.rate}.")
+              f"(prepare+record), roughly {lo:.0f}-{hi:.0f} min — the round trip "
+              f"dominates, not --rate.")
     return 0
 
 
