@@ -1,0 +1,42 @@
+name: publish
+
+# Publishing happens from a GitHub Release, over PyPI's Trusted Publishing —
+# OIDC, so there is no API token in the repository, in a secret, or anywhere to
+# rotate. twine reaches for this first on every upload and only falls back to
+# asking for a token because a laptop cannot prove who it is. Actions can.
+#
+# One-time setup on PyPI: this project's Publishing settings, add a GitHub
+# publisher for khwanlabs/khwan-mcp, workflow `publish.yml`, environment `pypi`.
+on:
+  release:
+    types: [published]
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      # Required for OIDC. Nothing else is, and nothing else is granted.
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - run: pip install -e . build twine
+      # The same checks build.yml runs on every push. 0.2.1 shipped an artifact
+      # that could not start, past a green build, because the check only imported
+      # __init__.py — so the server module and its tool list are what get checked.
+      - run: python -c "import khwan_mcp.server as s; print('server ok:', s.mcp.name)"
+      - name: the tools the client will see
+        run: |
+          python - <<'PY'
+          import asyncio
+          from khwan_mcp.server import mcp
+          names = [t.name for t in asyncio.run(mcp.list_tools())]
+          print("tools:", names)
+          assert "khwan_recall" in names and "khwan_remember" in names, names
+          PY
+      - run: python -m build
+      - run: python -m twine check dist/*
+      - uses: pypa/gh-action-pypi-publish@release/v1
