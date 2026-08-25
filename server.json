@@ -1,0 +1,50 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "ai.khwan/khwan-mcp",
+  "title": "Khwan",
+  "description": "Durable AI memory: recall distilled facts in a later session or subagent, and remember new ones.",
+  "version": "0.3.4",
+  "websiteUrl": "https://khwan.ai",
+  "repository": {
+    "url": "https://github.com/khwanlabs/khwan-mcp",
+    "source": "github"
+  },
+  "packages": [
+    {
+      "registryType": "pypi",
+      "identifier": "khwan-mcp",
+      "version": "0.3.4",
+      "runtimeHint": "uvx",
+      "transport": {
+        "type": "stdio"
+      },
+      "environmentVariables": [
+        {
+          "name": "KHWAN_API_KEY",
+          "description": "Your Khwan key from https://app.khwan.ai (kwk_live_...). It authenticates you to Khwan; it is not your model provider's key.",
+          "isRequired": true,
+          "isSecret": true,
+          "format": "string"
+        },
+        {
+          "name": "KHWAN_CORE",
+          "description": "Select an isolated core (brain). Defaults to the account's default core. The core must already exist.",
+          "isRequired": false,
+          "format": "string"
+        },
+        {
+          "name": "KHWAN_USER",
+          "description": "Isolated sub-brain per end-user within a core (paid plans); sets the X-Khwan-User header.",
+          "isRequired": false,
+          "format": "string"
+        },
+        {
+          "name": "KHWAN_BASE_URL",
+          "description": "Override the API base URL, e.g. http://127.0.0.1:8010 for a self-hosted engine.",
+          "isRequired": false,
+          "format": "string"
+        }
+      ]
+    }
+  ]
+}

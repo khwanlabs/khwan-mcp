@@ -45,3 +45,65 @@ jobs:
       - run: python -m build
       - run: python -m twine check dist/*
       - uses: pypa/gh-action-pypi-publish@release/v1
+
+  # The MCP Registry stores metadata, not artifacts: it looks the package up on
+  # PyPI and only accepts it if the README there carries `mcp-name:` matching
+  # server.json. So this cannot run before the upload above has landed — hence
+  # `needs`, and hence the wait for PyPI to actually serve the new version.
+  #
+  # One-time setup, in this order:
+  #  1. Generate an Ed25519 key and publish the public half as a TXT record on
+  #     the APEX of khwan.ai (not under a `_mcp-*` selector — the registry looks
+  #     at the apex, SPF-style, and a selector fails with a signature error):
+  #
+  #       openssl genpkey -algorithm Ed25519 -out key.pem
+  #       openssl pkey -in key.pem -pubout -outform DER | tail -c 32 | base64
+  #       # khwan.ai. IN TXT "v=MCPv1; k=ed25519; p=<that base64>"
+  #
+  #     macOS ships LibreSSL, which has no Ed25519 in genpkey; use
+  #     `brew install openssl@3` and call that binary explicitly.
+  #  2. Extract the 64-hex private seed and store it as MCP_PRIVATE_KEY on the
+  #     `mcp-registry` environment — an environment secret, not a repo secret,
+  #     restricted to this repo's tags. That key can publish (and overwrite)
+  #     anything under `ai.khwan/*`, so it should not be readable by every job:
+  #
+  #       openssl pkey -in key.pem -noout -text | grep -A3 "priv:" | tail -n +2 | tr -d ' :\n'
+  registry:
+    needs: publish
+    runs-on: ubuntu-latest
+    environment: mcp-registry
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - name: install mcp-publisher
+        run: |
+          curl -fL "https://github.com/modelcontextprotocol/registry/releases/latest/download/mcp-publisher_$(uname -s | tr '[:upper:]' '[:lower:]')_$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/').tar.gz" | tar xz mcp-publisher
+      # server.json carries a version in two places and both must equal the one
+      # just uploaded, so take the tag as the single source of truth rather than
+      # trusting that the commit remembered to bump them.
+      - name: pin server.json to the released version
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          jq --arg v "$VERSION" '.version = $v | .packages[0].version = $v' server.json > server.tmp
+          mv server.tmp server.json
+          cat server.json
+          ./mcp-publisher validate
+      # PyPI's own API lags the upload by seconds to a minute; publishing into
+      # that gap fails as "package validation failed", which reads like a bad
+      # server.json rather than like being early.
+      - name: wait for PyPI to serve it
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          for i in $(seq 1 30); do
+            if curl -fsS "https://pypi.org/pypi/khwan-mcp/${VERSION}/json" >/dev/null; then
+              echo "khwan-mcp ${VERSION} is on PyPI"; exit 0
+            fi
+            echo "not on PyPI yet (attempt ${i}); waiting"; sleep 10
+          done
+          echo "khwan-mcp ${VERSION} never appeared on PyPI"; exit 1
+      # DNS auth is what buys the `ai.khwan/` namespace; GitHub OIDC would work
+      # without a secret but names the server `io.github.khwanlabs/khwan-mcp`.
+      - name: authenticate to the registry
+        run: ./mcp-publisher login dns --domain khwan.ai --private-key "${{ secrets.MCP_PRIVATE_KEY }}"
+      - run: ./mcp-publisher publish

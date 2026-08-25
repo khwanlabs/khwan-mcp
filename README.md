@@ -10,6 +10,12 @@ subagent with** — a compact, bounded set of facts instead of a replayed
 transcript. One account can hold many isolated **cores** (brains), and — on paid
 plans — an isolated sub-brain per end-user.
 
+<!-- The MCP Registry verifies ownership of a PyPI package by finding this
+     name in the package README, which is what PyPI shows as the description.
+     It must match `name` in server.json, and it only reaches PyPI on the next
+     release — so do not rename one without re-releasing. -->
+<!-- mcp-name: ai.khwan/khwan-mcp -->
+
 ## How it saves tokens (and where it doesn't)
 
 Be honest about the mechanism — an MCP **adds** to a host's context, it cannot
