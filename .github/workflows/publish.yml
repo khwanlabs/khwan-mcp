@@ -76,9 +76,26 @@ jobs:
       contents: read
     steps:
       - uses: actions/checkout@v4
+      # Downloaded to a file and THEN unpacked, rather than piped into tar. A
+      # truncated download through a pipe surfaces as "gzip: stdin: unexpected
+      # end of file" — tar blamed for what curl did — and there is nothing left
+      # to retry by then. v0.3.5 lost its registry publish to exactly that, one
+      # connection reset on an otherwise green release.
       - name: install mcp-publisher
         run: |
-          curl -fL "https://github.com/modelcontextprotocol/registry/releases/latest/download/mcp-publisher_$(uname -s | tr '[:upper:]' '[:lower:]')_$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/').tar.gz" | tar xz mcp-publisher
+          url="https://github.com/modelcontextprotocol/registry/releases/latest/download/mcp-publisher_$(uname -s | tr '[:upper:]' '[:lower:]')_$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/').tar.gz"
+          for attempt in 1 2 3; do
+            if curl -fL --retry 3 --retry-all-errors --retry-delay 5 -o publisher.tgz "$url"; then
+              tar xzf publisher.tgz mcp-publisher && rm -f publisher.tgz && ./mcp-publisher --help >/dev/null && exit 0
+              echo "downloaded but could not unpack (attempt ${attempt})"
+            else
+              echo "download failed (attempt ${attempt})"
+            fi
+            rm -f publisher.tgz mcp-publisher
+            sleep 10
+          done
+          echo "could not install mcp-publisher after 3 attempts"
+          exit 1
       # server.json carries a version in two places and both must equal the one
       # just uploaded, so take the tag as the single source of truth rather than
       # trusting that the commit remembered to bump them.
