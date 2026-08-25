@@ -10,11 +10,25 @@ each turn is distilled deterministically from its `tool_use` blocks.
 
 ## What it keeps
 
-A turn is kept only if it **changed something** — edited a file, or ran a
-substantive command (`git commit`, `alembic`, `railway`, `pytest`, …). Pure
-question-and-answer turns are dropped. That is deliberate: retrieval returns the
-nearest neighbours with no relevance floor, so every stored packet that carries
-no durable fact is one more wrong answer available to a future query.
+Two kinds of turn are kept.
+
+**A turn that changed something** — edited a file, or ran a substantive command
+(`git commit`, `alembic`, `railway`, `pytest`, …). This is the record of work.
+
+**A turn that corrected something** — the user rejecting what was just done, or
+stating how they want it done ("not that", "ไม่เอา", "always ask me first"). These
+edit no file and run no command, so an earlier version of this script dropped
+every one of them. That was the wrong call: a correction is the most durable thing
+a session contains, and it is the one thing a rules file cannot capture, because a
+rules file only ever holds what someone remembered to write down. Measured over
+seven projects in one account, a single preference was restated **twelve times**
+and dropped twelve times — which is also why it had to be restated twelve times.
+
+Pure question-and-answer turns are still dropped: they leave nothing durable and
+add a near-neighbour for a future query to trip over. That cost is lower than it
+used to be — retrieval now has a relevance floor (`KHWAN_RETRIEVAL_MIN_SIMILARITY`,
+0.20) so an unrelated packet returns nothing rather than the nearest thing in the
+room — but a packet that says nothing is still not worth an operation.
 
 Each kept turn becomes an input/response pair:
 

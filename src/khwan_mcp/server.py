@@ -43,8 +43,19 @@ Recommended usage:
   ONCE to pull a COMPACT set of relevant remembered facts, and ground your work
   in them. This is the token-smart entry point: a fresh, bounded context instead
   of replaying a whole transcript.
-- REMEMBER (write): When a durable fact, preference, or decision emerges that
-  should outlive this session's context window, call `khwan_remember(fact=<it>)`.
+- REMEMBER (write): call `khwan_remember(fact=<standing rule>)` — and do NOT wait
+  for a fact to feel important enough. The trigger is mechanical, not a judgement
+  call. Call it in the SAME turn, before you carry out the fix, whenever the user:
+    * rejects or corrects what you just did ("not that", "wrong", "ไม่ใช่", "ไม่เอา")
+    * states a preference about HOW to work ("always X", "never Y", "ask me first")
+    * tells you something you already did once — a repeat means the first one was lost
+    * decides something, with a reason, that a future session would otherwise re-litigate
+  Store the RULE, not the sentence: "deploys go to staging first, never straight to
+  production" — not "no, not like that". It has to make sense to a session that
+  never saw this one.
+  This is the one thing a rules file (CLAUDE.md, .cursorrules, AGENTS.md) cannot do
+  for the user: it only ever holds what someone remembered to write down. Being
+  corrected once should be enough, and that only works if you write it down here.
 
 - FULL LOOP (for custom agents / non-caching hosts): `khwan_prepare(input)` → you
   answer grounded in the returned context → `khwan_record(turn_token, answer)`.
@@ -208,11 +219,20 @@ def khwan_remember(fact: str) -> Dict[str, Any]:
 
     A convenience over the prepare→record loop for the common "just remember this"
     case: it stores ``fact`` in the brain (no model call) so it outlives this
-    session's context window and is available to the next ``khwan_recall``. Use it
-    when a durable preference, decision, or fact emerges.
+    session's context window and is available to the next ``khwan_recall``.
+
+    **Reach for this the moment you are corrected.** A user rejecting your work, or
+    telling you how they want it done, is the most durable thing a session produces
+    and the easiest to lose — you fix the thing, the session ends, and the next one
+    makes the same mistake. If the user is telling you something for the second
+    time, the first time should have been stored here.
+
+    Write the standing RULE, not the utterance. "Deploys go to staging first, never
+    straight to production" survives into a session that never saw the conversation;
+    "no, not like that" does not.
 
     Args:
-        fact: the durable fact/preference to store.
+        fact: the durable rule/preference to store, phrased to stand alone.
 
     Returns:
         stored: whether the fact was persisted; reason when not.

@@ -29,8 +29,10 @@ Cores are NOT auto-created — create each one in the dashboard first, or the AP
 answers 404 "unknown core". Sub-brains ARE created on first write, but they are a
 paid-plan feature.
 
-Requires the Khwan client for ``--commit`` (``pip install khwan``); a dry run
-needs nothing but the standard library.
+Requires the Khwan client for ``--commit`` — ``pip install 'khwan>=0.4.0'``, which
+is the first version whose ``record()`` takes ``occurred_at``. An older client
+refuses every turn one warning at a time; the run then exits non-zero rather than
+looking like a finished import. A dry run needs nothing but the standard library.
 
 Env: KHWAN_API_KEY (required), KHWAN_BASE_URL (optional).
 """
@@ -64,6 +66,28 @@ SUBSTANTIVE = re.compile(
     r"npm (publish|run build)|pip install|docker|railway|vercel|fly deploy|"
     r"alembic|psql|terraform|pytest|make )\b"
 )
+
+# A human rejecting, correcting or restating a preference. These turns change no
+# file and run no command, so the gate in distil() used to drop every one of them
+# — and they are the most durable thing anyone says. Measured over seven projects
+# in one account: a single preference was restated TWELVE times and dropped twelve
+# times, which is also why it had to be restated twelve times.
+#
+# The engine classifies these too (khwan_main._CORRECTION_MARKERS) — but only for
+# turns that reach it, and this filter runs first. Kept as its own list because
+# this script is stdlib-only by design and the engine is a private package.
+#
+# Two markers from the engine's list are deliberately NOT here, both false friends
+# in Thai: "เปล่า" is also the tail of the question particle "…รึเปล่า" (= "…or not?"),
+# and "แทน" sits inside "ตัวแทน" (= agent/representative), a common word in Thai
+# commercial copy. Bare "not " is out for the same reason: it fires on build logs
+# and on console reports pasted into a turn.
+CORRECTING = re.compile(
+    r"ไม่ใช่|ไม่ถูก|ไม่เอา|ไม่อยาก|ไม่ต้อง|ไม่ชอบ|ยังไม่|ผิด|แก้ใหม่|ที่จริง|จริงๆ|จริง ๆ|"
+    r"อย่า|ห้าม|ทุกครั้ง|เสมอ|ต่อไปนี้|จากนี้|ขอเป็น|เอาแบบ|อยากได้|ชอบแบบ|"
+    r"\bno,|that'?s not|that is not|\bwrong\b|incorrect|\bactually\b|i meant|"
+    r"you'?re wrong|rather,|\bdon'?t\b|\bnever\b|\balways\b|instead|\bprefer\b|\bstop\b",
+    re.IGNORECASE)
 
 
 # ── distillation ──────────────────────────────────────────────────────────────
@@ -164,17 +188,25 @@ def _short_text(text: str) -> str:
 
 
 def distil(user_text: str, events: list, repo_root: str = "") -> Optional[tuple[str, str]]:
-    """(ask, outcome) for a turn that changed something — else None.
+    """(ask, outcome) for a turn worth remembering — else None.
 
-    A turn that only answered a question leaves nothing durable behind; storing
-    it would just add a near-neighbour for future queries to trip over.
+    Two kinds qualify. A turn that CHANGED something (edited a file, ran a real
+    command) leaves a record of work. A turn that CORRECTED something leaves a
+    standing preference — and it edits nothing, which is why it used to be dropped.
+
+    A turn that merely answered a question is still skipped: it leaves nothing
+    durable and only adds a near-neighbour for future queries to trip over.
     """
     files = sorted({v for k, v in events if k == "edit"}
                    - {v for k, v in events if k == "edit" and TRANSIENT.search(v)})
     ran = [c for c in dict.fromkeys(v for k, v in events if k == "ran") if c]
     said = [v for k, v in events if k == "said"]
     if not files and not ran:
-        return None
+        # Nothing was changed — but being told "not that, this" is the highest-signal
+        # thing a session contains, and it never touches a file. Require an answer
+        # too, so a bare complaint with no reply attached is not stored as a fact.
+        if not (said and CORRECTING.search(user_text)):
+            return None
 
     files = [_short(f) for f in files]
     parts = []
@@ -374,6 +406,24 @@ def main() -> int:
         print(f"Cost if committed: {grand['sent'] * 2} operations "
               f"(prepare+record), roughly {lo:.0f}-{hi:.0f} min — the round trip "
               f"dominates, not --rate.")
+        return 0
+
+    # A commit that wrote NOTHING is an outage, not a quiet success. Every turn is
+    # wrapped in a try/except so one bad row cannot end the run — which also means
+    # a fault affecting EVERY row (an expired token, a client too old for the
+    # server, a core that does not exist) is reported one harmless "!!" at a time
+    # and then exits 0. That happened: a 0.2.0 client against a script passing
+    # `occurred_at` refused all 266 turns, printed a per-turn warning nobody reads
+    # at that volume, and finished looking like a completed import. Say it once,
+    # loudly, and exit non-zero so a caller finds out.
+    if grand["refused"] and not grand["sent"]:
+        print(f"\n!! NOTHING WAS WRITTEN — all {grand['refused']} turns were refused.\n"
+              f"   A fault that hits every turn is not a bad row. Check, in order:\n"
+              f"     - is the installed `khwan` client new enough for this script?\n"
+              f"     - does the core in --map exist? (cores are never auto-created)\n"
+              f"     - is KHWAN_API_KEY valid for that account?",
+              file=sys.stderr)
+        return 1
     return 0
 
 
