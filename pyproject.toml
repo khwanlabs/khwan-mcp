@@ -10,7 +10,13 @@ dependencies = [
     # server imports. 0.2.1 shipped unbounded and every fresh install since
     # mcp 2.0.0 (2026-07-28) died on ModuleNotFoundError at startup.
     "mcp[cli]>=1.2,<2",
-    "khwan>=0.1",
+    # Same reasoning one dependency down, and this one is ours — which makes an
+    # unbounded range worse, not safer: the day khwan cuts a 1.0 with a changed
+    # Turn, every fresh install of khwan-mcp breaks at once, including versions
+    # already published. The floor stays at 0.1 because it is true — 0.1 through
+    # 0.4 all expose the `sources` / `coherence` / `turn_token` / `raw()` surface
+    # this server reads; only the missing ceiling was ever the bug.
+    "khwan>=0.1,<1",
 ]
 
 [project.scripts]
