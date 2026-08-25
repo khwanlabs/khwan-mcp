@@ -29,8 +29,9 @@ outcome:  FILES: components/AuthGate.tsx
 ## Use
 
 ```bash
-# 0. the client, for --commit (a dry run needs nothing)
-pip install khwan
+# 0. the client, for --commit (a dry run needs nothing).
+#    0.4+ to keep each turn's real timestamp; older still works, undated.
+pip install "khwan>=0.4"
 
 # 1. create every target core in the dashboard first (they are not auto-created)
 # 2. map your project directories to those cores
@@ -54,6 +55,12 @@ python3 backfill_claude_code.py --map cores.json --commit --rate 25
 - **Oldest first.** Retrieval ranks by `similarity × confidence`, so a later turn
   that corrects an earlier one has to land after it. Sessions are ordered by
   mtime for exactly this reason.
+- **Each packet keeps the time it happened.** The transcript timestamp is sent as
+  `occurred_at`, so two months of history is stored as two months rather than as
+  the twelve minutes the import took. Without it, ranking cannot tell a decision
+  from June from one made this morning — which is the case a memory most needs to
+  get right. Needs `khwan>=0.4` and an engine that accepts `occurred_at`; older
+  ones ignore it and date the packet now, as before.
 - **This trains the brain, it does not just load it.** Every `record` moves
   SimSelf axes and coherence, the same as a live turn.
 - **Resumable.** Every successful turn is appended to

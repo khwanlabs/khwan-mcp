@@ -42,6 +42,7 @@ import json
 import os
 import re
 import sys
+from datetime import datetime
 import time
 from pathlib import Path
 from typing import Iterator, Optional
@@ -67,9 +68,17 @@ SUBSTANTIVE = re.compile(
 
 # ── distillation ──────────────────────────────────────────────────────────────
 
-def turns(path: Path) -> Iterator[tuple[str, list]]:
-    """Yield (user_text, events) per human turn, in transcript order."""
+def turns(path: Path) -> Iterator[tuple[str, list, Optional[str]]]:
+    """Yield (user_text, events, timestamp) per human turn, in transcript order.
+
+    The timestamp is when the turn HAPPENED, off the transcript entry. Without it
+    every packet is dated the minute the import ran, and months of work collapses
+    into however long the import took — measured once at two months of history
+    stored as twelve minutes. Retrieval then cannot tell a decision from June from
+    one made this morning.
+    """
     cur_user: Optional[str] = None
+    cur_ts: Optional[str] = None
     events: list = []
     try:
         raw = path.read_text(encoding="utf-8", errors="replace")
@@ -103,8 +112,8 @@ def turns(path: Path) -> Iterator[tuple[str, list]]:
             if not text or text.startswith("<"):
                 continue
             if cur_user and events:
-                yield cur_user, events
-            cur_user, events = text, []
+                yield cur_user, events, cur_ts
+            cur_user, events, cur_ts = text, [], entry.get("timestamp")
             continue
 
         for b in blocks:
@@ -121,7 +130,7 @@ def turns(path: Path) -> Iterator[tuple[str, list]]:
             elif b.get("type") == "text" and (b.get("text") or "").strip():
                 events.append(("said", b["text"].strip()))
     if cur_user and events:
-        yield cur_user, events
+        yield cur_user, events, cur_ts
 
 
 def _commands(block: str) -> list[str]:
@@ -180,6 +189,20 @@ def distil(user_text: str, events: list, repo_root: str = "") -> Optional[tuple[
 
 
 # ── replay ────────────────────────────────────────────────────────────────────
+
+def _parse_ts(raw: Optional[str]) -> Optional[datetime]:
+    """Transcript timestamp → datetime, or None when it is missing or unreadable.
+
+    None is fine: the server dates the packet now, which is what happened before
+    this existed. A malformed timestamp is not worth failing an import over.
+    """
+    if not raw:
+        return None
+    try:
+        return datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    except (TypeError, ValueError):
+        return None
+
 
 def brain_of(value) -> dict:
     """Normalise a cores.json value into {core, user, label}.
@@ -281,7 +304,7 @@ def main() -> int:
 
         n_sent = n_skip = n_ref = n_dur = n_seen = 0
         for sess in sessions:
-            for i, (user_text, events) in enumerate(turns(sess)):
+            for i, (user_text, events, occurred) in enumerate(turns(sess)):
                 n_seen += 1
                 pair = distil(user_text, events, repo_root)
                 if not pair:
@@ -305,7 +328,7 @@ def main() -> int:
                         # Coherence gate declined this turn — nothing to record.
                         n_ref += 1
                         continue
-                    kw.record(turn, outcome)
+                    kw.record(turn, outcome, occurred_at=_parse_ts(occurred))
                 except Exception as e:            # keep going; log and move on
                     print(f"   !! {key}: {e}", file=sys.stderr)
                     n_ref += 1
