@@ -222,6 +222,12 @@ hook injects memory on every prompt and a `Stop` hook records every answer.
 > cost (or on a non-caching client); otherwise use `khwan_recall` at session
 > start.
 
+## Source
+
+[github.com/khwanlabs/khwan-mcp](https://github.com/khwanlabs/khwan-mcp) — this
+server runs on your machine, with your key, reading what you type. Read it before
+you install it.
+
 ## License
 
 MIT — © Khwan Labs. See [LICENSE](LICENSE).
