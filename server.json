@@ -5,6 +5,15 @@
   "description": "Durable AI memory: recall distilled facts in a later session or subagent, and remember new ones.",
   "version": "0.3.4",
   "websiteUrl": "https://khwan.ai",
+  "icons": [
+    {
+      "src": "https://docs.khwan.ai/khwan-favicon.svg",
+      "mimeType": "image/svg+xml",
+      "sizes": [
+        "any"
+      ]
+    }
+  ],
   "repository": {
     "url": "https://github.com/khwanlabs/khwan-mcp",
     "source": "github"
