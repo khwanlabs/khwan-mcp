@@ -16,7 +16,12 @@ jobs:
     runs-on: ubuntu-latest
     environment: pypi
     permissions:
-      # Required for OIDC. Nothing else is, and nothing else is granted.
+      # Naming any permission REPLACES the default set, so contents: read has to
+      # be asked for — without it actions/checkout cannot read a private
+      # repository and fails with "Repository not found", which reads like the
+      # repo is gone rather than like a missing scope.
+      contents: read
+      # OIDC, which is what removes the need for an API token.
       id-token: write
     steps:
       - uses: actions/checkout@v4
