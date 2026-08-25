@@ -172,14 +172,21 @@ def khwan_recall(query: str, limit: int = 3) -> Dict[str, Any]:
 
     - **Three facts is the ceiling.** The server ranks a wider candidate pool and
       keeps its top three, so `limit` can only narrow that further, never widen
-      it. It defaulted to 8, which read like a request for eight.
+      it. Asking for more returns three.
+    - **A relevance floor applies, so an EMPTY `facts` is an answer.** It means
+      the brain has nothing close to this question — read it as "not known here",
+      not as a failure. Do not retry with a reworded query hoping for more, and
+      do not fill the gap with whichever fact happened to be nearest.
+
     Lessons — what synthesis distilled from many turns — come back alongside the
-    raw exchanges, and lead the seed text: a rule earned over months outranks any
-    single turn that happens to be nearby in the index.
+    raw exchanges and LEAD the seed text: a rule earned over months outranks any
+    single turn that happens to sit nearby in the index.
 
     Args:
-        query: the task or topic to recall memory for.
-        limit: cap on facts returned; the server's own ceiling is 3.
+        query: the task or topic to recall memory for. Phrase it as the work you
+            are about to do, not as a keyword — it is matched on meaning.
+        limit: cap on facts returned, 1-3. The server's own ceiling is 3, so this
+            can only lower it. Leave it alone unless you want fewer than three.
 
     Returns:
         lessons:   rules synthesis distilled from many past turns.
@@ -251,10 +258,23 @@ def khwan_remember(fact: str) -> Dict[str, Any]:
 
 @mcp.tool()
 def khwan_memory(limit: int = 20) -> Dict[str, Any]:
-    """Inspect what this brain currently remembers (most recent first).
+    """Inspect what this brain currently remembers, newest first.
+
+    A DEBUGGING window on the brain, not a way to seed a session. It returns
+    recent entries in time order and ignores what you are working on, so it
+    answers "is anything in here / did that write land" — not "what is relevant
+    to this task". For the latter use ``khwan_recall``, which ranks by meaning
+    and returns a bounded set. No model is called.
+
+    Reach for it when a recall came back empty and you want to know whether the
+    brain is empty or merely has nothing close, when confirming a
+    ``khwan_remember`` persisted, or when the user asks what Khwan knows.
 
     Args:
-        limit: max memory entries to return (default 20).
+        limit: max entries to return, newest first (default 20).
+
+    Returns:
+        The brain's recent memory entries, in the order they were written.
     """
     try:
         return _kw().memory(limit)
