@@ -37,13 +37,13 @@
         },
         {
           "name": "KHWAN_CORE",
-          "description": "Select an isolated core (brain). Defaults to the account's default core. The core must already exist.",
+          "description": "Select a named core (brain). Paid plans only — the free plan has just `default`, and an unknown slug answers 404. Leave unset to use the default.",
           "isRequired": false,
           "format": "string"
         },
         {
           "name": "KHWAN_USER",
-          "description": "Isolated sub-brain per end-user within a core (paid plans); sets the X-Khwan-User header.",
+          "description": "A separate brain inside the core, created on first write — 3 on the free plan, unlimited on paid. Sets the X-Khwan-User header.",
           "isRequired": false,
           "format": "string"
         },
