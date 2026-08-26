@@ -106,6 +106,52 @@ def _lessons(turn: Turn) -> List[str]:
     return [str(x) for x in (raw.get("lessons") or []) if str(x).strip()]
 
 
+UPGRADE_URL = "https://app.khwan.ai"
+
+
+def _fail(op: str, e: KhwanError) -> RuntimeError:
+    """Turn a Khwan API error into something the MODEL can act on.
+
+    A tool error is read by a model, not by a person, so `failed (402)` tells it
+    nothing about what to do next — and every plausible guess is a wrong one:
+    retrying a paywall until the turn dies, or dropping memory silently on a blip
+    that a wait would have cleared. Name the KIND of failure and the next move.
+
+    Note what is not here: a retry delay. The server sends `Retry-After` on a 429,
+    but KhwanError carries only `.status` and a message, so the number never
+    reaches this layer. Better to say "wait" than to invent a figure.
+    """
+    detail = str(e).strip().rstrip(".")
+    if e.status == 402:
+        return RuntimeError(
+            f"khwan {op} failed (402): {detail}. This is a PLAN LIMIT, not a "
+            f"transient error — retrying will not clear it. Tell the user which "
+            f"limit they reached and that a larger plan at {UPGRADE_URL} lifts "
+            f"it, then carry on without this call."
+        )
+    if e.status == 429:
+        return RuntimeError(
+            f"khwan {op} failed (429): {detail}. Wait before any retry, and if "
+            f"you cannot wait, continue WITHOUT memory rather than "
+            f"retrying in a loop. Repeated 429s mean the plan's burst is too "
+            f"small for this workload — a larger plan at {UPGRADE_URL} raises it."
+        )
+    if e.status in (401, 403):
+        return RuntimeError(
+            f"khwan {op} failed ({e.status}): {detail}. The credential is missing "
+            f"or rejected — this server reads KHWAN_API_KEY from its environment. "
+            f"Do not retry; tell the user, whose key is at {UPGRADE_URL}."
+        )
+    if e.status == 404:
+        return RuntimeError(
+            f"khwan {op} failed (404): {detail}. Usually KHWAN_CORE names a core "
+            f"that does not exist: cores are created in the dashboard, and the "
+            f"free plan has only `default`. Do not retry; tell the user, who can "
+            f"add cores at {UPGRADE_URL}."
+        )
+    return RuntimeError(f"khwan {op} failed ({e.status}): {detail}.")
+
+
 @mcp.tool()
 def khwan_prepare(input: str) -> Dict[str, Any]:
     """Pull the memory-enriched context for a turn BEFORE you answer.
@@ -128,7 +174,7 @@ def khwan_prepare(input: str) -> Dict[str, Any]:
     try:
         turn = _kw().prepare(input)
     except KhwanError as e:
-        raise RuntimeError(f"khwan prepare failed ({e.status}): {e}") from e
+        raise _fail("prepare", e) from e
     return {
         "context": turn.messages,
         "lessons": _lessons(turn),
@@ -155,7 +201,7 @@ def khwan_record(turn_token: str, answer: str) -> Dict[str, Any]:
         # The hosted client reads turn_token off a Turn; we only need the token.
         return _kw().record(Turn({"turn_token": turn_token}), answer)
     except KhwanError as e:
-        raise RuntimeError(f"khwan record failed ({e.status}): {e}") from e
+        raise _fail("record", e) from e
 
 
 @mcp.tool()
@@ -197,7 +243,7 @@ def khwan_recall(query: str, limit: int = 3) -> Dict[str, Any]:
     try:
         turn = _kw().prepare(query)
     except KhwanError as e:
-        raise RuntimeError(f"khwan recall failed ({e.status}): {e}") from e
+        raise _fail("recall", e) from e
     facts: List[Dict[str, Any]] = []
     for s in (turn.sources or [])[:limit]:
         if isinstance(s, dict) and s.get("response"):
@@ -251,7 +297,7 @@ def khwan_remember(fact: str) -> Dict[str, Any]:
             return {"stored": False, "reason": turn.reason or "brain gate declined the turn"}
         kw.record(turn, fact)
     except KhwanError as e:
-        raise RuntimeError(f"khwan remember failed ({e.status}): {e}") from e
+        raise _fail("remember", e) from e
     return {"stored": True, "contradicted_memory": bool(turn._d.get("contradiction"))
             if hasattr(turn, "_d") else None}
 
@@ -279,7 +325,7 @@ def khwan_memory(limit: int = 20) -> Dict[str, Any]:
     try:
         return _kw().memory(limit)
     except KhwanError as e:
-        raise RuntimeError(f"khwan memory failed ({e.status}): {e}") from e
+        raise _fail("memory", e) from e
 
 
 @mcp.tool()
@@ -292,7 +338,7 @@ def khwan_cores() -> List[Any]:
     try:
         result = _kw().cores()
     except KhwanError as e:
-        raise RuntimeError(f"khwan cores failed ({e.status}): {e}") from e
+        raise _fail("cores", e) from e
     # /cores may return a bare list or {"cores": [...]}; normalize to a list.
     if isinstance(result, dict):
         return result.get("cores", result)
