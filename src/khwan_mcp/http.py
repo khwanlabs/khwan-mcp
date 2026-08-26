@@ -121,7 +121,11 @@ class BrainScopedMCP:
         core, user, path = _split_brain(scope["path"], self.mount)
         scope = {**scope, "path": path, "raw_path": path.encode()}
 
-        with request_credentials(bearer_token=token, core=core, user=user):
+        # KHWAN_BASE_URL matters more here than on stdio. Mounted beside the
+        # API, the default sends every tool call out to the public hostname and
+        # back — a round trip over the internet to reach the process next door.
+        with request_credentials(bearer_token=token, core=core, user=user,
+                                 base_url=os.environ.get("KHWAN_BASE_URL") or None):
             await self.app(scope, receive, send)
 
 
