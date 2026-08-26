@@ -3,7 +3,7 @@
   "name": "ai.khwan/khwan-mcp",
   "title": "Khwan",
   "description": "Durable AI memory: recall distilled facts in a later session or subagent, and remember new ones.",
-  "version": "0.3.8",
+  "version": "0.3.9",
   "websiteUrl": "https://khwan.ai",
   "icons": [
     {
@@ -22,7 +22,7 @@
     {
       "registryType": "pypi",
       "identifier": "khwan-mcp",
-      "version": "0.3.8",
+      "version": "0.3.9",
       "runtimeHint": "uvx",
       "transport": {
         "type": "stdio"

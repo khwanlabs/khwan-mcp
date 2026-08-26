@@ -158,15 +158,15 @@ def test_a_deeper_path_is_not_silently_accepted():
 
 def test_split_is_pure():
     # standalone and mounted forms agree on the answer
-    assert _split_brain("/mcp/acme/web", "/mcp") == ("acme", "web", "/mcp")
-    assert _split_brain("/acme/web", "/mcp") == ("acme", "web", "/mcp")
-    assert _split_brain("/mcp", "/mcp") == (None, None, "/mcp")
-    assert _split_brain("/", "/mcp") == (None, None, "/mcp")
+    assert _split_brain("/mcp/acme/web", "", "/mcp") == ("acme", "web", "/mcp")
+    assert _split_brain("/mcp/acme/web", "/mcp", "/mcp") == ("acme", "web", "/mcp/mcp")
+    assert _split_brain("/mcp", "", "/mcp") == (None, None, "/mcp")
+    assert _split_brain("/mcp", "/mcp", "/mcp") == (None, None, "/mcp/mcp")
 
 
 def test_a_prefix_lookalike_is_not_stripped():
     """`/mcpfoo` is a core called mcpfoo, not the mount plus "foo"."""
-    assert _split_brain("/mcpfoo", "/mcp") == ("mcpfoo", None, "/mcp")
+    assert _split_brain("/mcpfoo", "", "/mcp") == ("mcpfoo", None, "/mcp")
 
 
 def test_the_inner_app_always_gets_the_route_it_serves():

@@ -1,6 +1,6 @@
 [project]
 name = "khwan-mcp"
-version = "0.3.8"
+version = "0.3.9"
 description = "MCP server for Khwan — give Claude (Code / Desktop) or any MCP client a persistent, learning memory: seed a session with recall, remember durable facts. Khwan never runs a model; Claude is your model."
 readme = "README.md"
 requires-python = ">=3.10"
