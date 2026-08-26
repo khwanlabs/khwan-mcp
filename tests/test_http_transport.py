@@ -178,3 +178,21 @@ def test_lifespan_passes_straight_through():
     spy = Spy()
     asyncio.run(_call(BrainScopedMCP(spy), _scope(type_="lifespan")))
     assert spy.calls == 1 and spy.creds is None
+
+
+# ── base_url ──────────────────────────────────────────────────────────────────
+
+def test_base_url_is_forwarded_when_set(monkeypatch):
+    """Mounted beside the API, the default would round-trip over the internet."""
+    monkeypatch.setenv("KHWAN_BASE_URL", "http://127.0.0.1:8080")
+    spy = Spy()
+    asyncio.run(_call(BrainScopedMCP(spy), _scope(headers=_auth())))
+    assert spy.creds["base_url"] == "http://127.0.0.1:8080"
+
+
+def test_no_base_url_key_when_unset(monkeypatch):
+    """Absent, not empty — an empty string would override the SDK default."""
+    monkeypatch.delenv("KHWAN_BASE_URL", raising=False)
+    spy = Spy()
+    asyncio.run(_call(BrainScopedMCP(spy), _scope(headers=_auth())))
+    assert "base_url" not in spy.creds

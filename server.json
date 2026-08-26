@@ -3,7 +3,7 @@
   "name": "ai.khwan/khwan-mcp",
   "title": "Khwan",
   "description": "Durable AI memory: recall distilled facts in a later session or subagent, and remember new ones.",
-  "version": "0.3.6",
+  "version": "0.3.7",
   "websiteUrl": "https://khwan.ai",
   "icons": [
     {
@@ -22,7 +22,7 @@
     {
       "registryType": "pypi",
       "identifier": "khwan-mcp",
-      "version": "0.3.6",
+      "version": "0.3.7",
       "runtimeHint": "uvx",
       "transport": {
         "type": "stdio"
@@ -54,6 +54,24 @@
           "format": "string"
         }
       ]
+    }
+  ],
+  "remotes": [
+    {
+      "type": "streamable-http",
+      "url": "https://mcp.khwan.ai/mcp/{core}/{user}",
+      "variables": {
+        "core": {
+          "description": "Which core (brain) this install talks to. The free plan has only `default`; named cores are a paid feature and are created in the dashboard.",
+          "default": "default",
+          "isRequired": false
+        },
+        "user": {
+          "description": "A separate brain inside that core — one per project is the usual pattern. 3 on the free plan, unlimited on paid. Created on first write.",
+          "default": "main",
+          "isRequired": false
+        }
+      }
     }
   ]
 }
