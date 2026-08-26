@@ -53,24 +53,39 @@ def _bearer(headers: list) -> Optional[str]:
     return None
 
 
-def _split_brain(path: str, mount: str) -> Tuple[Optional[str], Optional[str], str]:
-    """`/mcp/acme/web` → ("acme", "web", "/mcp"). Missing segments stay None.
+def _split_brain(path: str, inner: str) -> Tuple[Optional[str], Optional[str], str]:
+    """Read the brain segments, from a mounted OR a standalone path.
 
-    Only the two segments after the mount are read. Anything deeper is left on
-    the path for the inner app to reject, rather than being silently ignored —
-    a URL we did not understand should not quietly become one we did.
+    Starlette's `Mount` strips its own prefix before the inner app is called, so
+    the same request arrives shaped two different ways depending on how this app
+    was wired:
+
+        mounted at /mcp   →  "/acme/web"
+        standalone        →  "/mcp/acme/web"
+
+    Both must work, and getting it wrong is silent: the segments are simply not
+    seen, every install lands on the default brain, and nothing errors.
+
+    Returns the core, the sub-brain, and the path to hand the inner app — which
+    is always `inner`, because FastMCP serves at its own fixed route regardless
+    of where this wrapper sits.
     """
-    if not path.startswith(mount):
-        return None, None, path
-    rest = path[len(mount):].strip("/")
+    rest = path
+    if rest == inner:
+        rest = ""
+    elif rest.startswith(inner + "/"):
+        rest = rest[len(inner):]
+    rest = rest.strip("/")
     if not rest:
-        return None, None, mount
+        return None, None, inner
     parts = rest.split("/")
     if len(parts) > 2:
+        # Deeper than we understand. Leave it intact for the inner app to
+        # refuse — a URL we did not parse must not quietly become one we did.
         return None, None, path
     core = parts[0] or None
     user = parts[1] if len(parts) > 1 and parts[1] else None
-    return core, user, mount
+    return core, user, inner
 
 
 async def _send_json(send: Callable, status: int, body: Dict[str, Any],
@@ -93,9 +108,12 @@ class BrainScopedMCP:
     caller — never a process-wide one shared with whoever arrived first.
     """
 
-    def __init__(self, app: Optional[Callable] = None, *, mount: str = "/mcp") -> None:
+    def __init__(self, app: Optional[Callable] = None, *, inner_path: str = "/mcp") -> None:
         self.app = app if app is not None else mcp.streamable_http_app()
-        self.mount = "/" + mount.strip("/")
+        # The route FastMCP itself serves. Not where this wrapper is mounted —
+        # those are different things, and conflating them is what broke the
+        # first deploy.
+        self.inner_path = "/" + inner_path.strip("/")
 
     async def __call__(self, scope: dict, receive: Callable, send: Callable) -> None:
         if scope["type"] != "http":
@@ -118,7 +136,7 @@ class BrainScopedMCP:
             )
             return
 
-        core, user, path = _split_brain(scope["path"], self.mount)
+        core, user, path = _split_brain(scope["path"], self.inner_path)
         scope = {**scope, "path": path, "raw_path": path.encode()}
 
         # KHWAN_BASE_URL matters more here than on stdio. Mounted beside the
@@ -129,6 +147,6 @@ class BrainScopedMCP:
             await self.app(scope, receive, send)
 
 
-def app(*, mount: str = "/mcp") -> BrainScopedMCP:
+def app(*, inner_path: str = "/mcp") -> BrainScopedMCP:
     """The ASGI app to mount, e.g. ``app.mount("/mcp", khwan_mcp.http.app())``."""
-    return BrainScopedMCP(mount=mount)
+    return BrainScopedMCP(inner_path=inner_path)

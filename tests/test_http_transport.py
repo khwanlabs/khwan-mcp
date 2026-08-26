@@ -127,10 +127,16 @@ def test_the_context_is_released_after_the_request():
 # ── the path asks for a brain ─────────────────────────────────────────────────
 
 @pytest.mark.parametrize("path,core,user", [
+    # standalone — the wrapper sees the whole path
     ("/mcp", None, None),
     ("/mcp/", None, None),
     ("/mcp/acme", "acme", None),
     ("/mcp/acme/web", "acme", "web"),
+    # mounted at /mcp — Starlette strips its own prefix first. This is the shape
+    # that reached production and 404'd, so it is pinned in both forms.
+    ("/", None, None),
+    ("/acme", "acme", None),
+    ("/acme/web", "acme", "web"),
 ])
 def test_brain_is_read_from_the_path(path, core, user):
     spy = Spy()
@@ -151,8 +157,23 @@ def test_a_deeper_path_is_not_silently_accepted():
 
 
 def test_split_is_pure():
+    # standalone and mounted forms agree on the answer
     assert _split_brain("/mcp/acme/web", "/mcp") == ("acme", "web", "/mcp")
-    assert _split_brain("/elsewhere", "/mcp") == (None, None, "/elsewhere")
+    assert _split_brain("/acme/web", "/mcp") == ("acme", "web", "/mcp")
+    assert _split_brain("/mcp", "/mcp") == (None, None, "/mcp")
+    assert _split_brain("/", "/mcp") == (None, None, "/mcp")
+
+
+def test_a_prefix_lookalike_is_not_stripped():
+    """`/mcpfoo` is a core called mcpfoo, not the mount plus "foo"."""
+    assert _split_brain("/mcpfoo", "/mcp") == ("mcpfoo", None, "/mcp")
+
+
+def test_the_inner_app_always_gets_the_route_it_serves():
+    """FastMCP has its own fixed route; where we are mounted is unrelated."""
+    spy = Spy()
+    asyncio.run(_call(BrainScopedMCP(spy), _scope("/acme/web", _auth())))
+    assert spy.scope["path"] == "/mcp"
 
 
 # ── isolation under load ──────────────────────────────────────────────────────
