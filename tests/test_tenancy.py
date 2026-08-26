@@ -197,3 +197,25 @@ def test_the_caller_survives_the_thread_hop():
             return await server._off_loop(read_key)
 
     assert asyncio.run(main()) == "tok_alice"
+
+
+# ── an error must not send the user somewhere with nothing to fix ─────────────
+
+def test_a_bearer_caller_is_not_told_to_find_an_api_key():
+    """A model read the old text and advised setting KHWAN_API_KEY on a remote
+    connection that has never used one."""
+    from khwan import KhwanError
+
+    async def main():
+        with server.request_credentials(bearer_token="tok"):
+            return str(server._fail("cores", KhwanError(401, "Invalid bearer token")))
+
+    msg = asyncio.run(main())
+    assert "authorize this server again" in msg
+    assert "KHWAN_API_KEY" not in msg
+
+
+def test_a_key_caller_is_still_told_about_the_key():
+    from khwan import KhwanError
+    msg = str(server._fail("cores", KhwanError(401, "Invalid API key")))
+    assert "KHWAN_API_KEY" in msg

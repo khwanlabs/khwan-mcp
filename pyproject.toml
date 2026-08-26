@@ -1,6 +1,6 @@
 [project]
 name = "khwan-mcp"
-version = "0.3.10"
+version = "0.3.11"
 description = "MCP server for Khwan — give Claude (Code / Desktop) or any MCP client a persistent, learning memory: seed a session with recall, remember durable facts. Khwan never runs a model; Claude is your model."
 readme = "README.md"
 requires-python = ">=3.10"
@@ -20,7 +20,7 @@ dependencies = [
     # token and has nothing else to send. An older khwan would put it in the
     # X-API-Key header, where it is looked up as a key, misses, and 401s — a
     # failure that points at the credential rather than at the floor being wrong.
-    "khwan>=0.4.1,<1",
+    "khwan>=0.4.2,<1",
 ]
 
 [project.scripts]
