@@ -85,7 +85,9 @@ _request_creds: contextvars.ContextVar[Optional[Dict[str, Any]]] = contextvars.C
 
 
 @contextmanager
-def request_credentials(api_key: str, *, core: Optional[str] = None,
+def request_credentials(api_key: Optional[str] = None, *,
+                        bearer_token: Optional[str] = None,
+                        core: Optional[str] = None,
                         user: Optional[str] = None,
                         base_url: Optional[str] = None) -> Iterator[None]:
     """Run a block as one specific caller — for a transport serving many.
@@ -93,10 +95,16 @@ def request_credentials(api_key: str, *, core: Optional[str] = None,
     A ContextVar, not a global: each request in an asyncio server gets its own
     copy, so concurrent callers cannot see each other's credentials even while
     they interleave. Resets on exit, including when the body raises.
+
+    Exactly one credential. An `api_key` is the account's own secret; a
+    `bearer_token` is an OAuth token belonging to the caller, which is what an
+    HTTP transport receives and must not exchange for anything of its own.
     """
-    if not api_key:
-        raise ValueError("api_key is required")
-    creds: Dict[str, Any] = {"api_key": api_key}
+    if bool(api_key) == bool(bearer_token):
+        raise ValueError("pass exactly one of api_key or bearer_token")
+    creds: Dict[str, Any] = (
+        {"bearer_token": bearer_token} if bearer_token else {"api_key": api_key}
+    )
     if core:
         creds["core"] = core
     if user:

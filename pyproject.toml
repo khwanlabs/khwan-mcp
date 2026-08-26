@@ -16,7 +16,11 @@ dependencies = [
     # already published. The floor stays at 0.1 because it is true — 0.1 through
     # 0.4 all expose the `sources` / `coherence` / `turn_token` / `raw()` surface
     # this server reads; only the missing ceiling was ever the bug.
-    "khwan>=0.1,<1",
+    # >=0.4.1 for `bearer_token`: the HTTP transport forwards the caller's OAuth
+    # token and has nothing else to send. An older khwan would put it in the
+    # X-API-Key header, where it is looked up as a key, misses, and 401s — a
+    # failure that points at the credential rather than at the floor being wrong.
+    "khwan>=0.4.1,<1",
 ]
 
 [project.scripts]
