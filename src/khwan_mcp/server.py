@@ -24,8 +24,11 @@ Config is environment-driven (nothing secret on the command line):
 
 from __future__ import annotations
 
+import contextvars
 import os
-from typing import Any, Dict, List, Optional
+from collections import OrderedDict
+from contextlib import contextmanager
+from typing import Any, Dict, Iterator, List, Optional, Tuple
 
 from khwan import Khwan, KhwanError, Turn
 from mcp.server.fastmcp import FastMCP
@@ -67,33 +70,86 @@ Recommended usage:
 mcp = FastMCP("khwan", instructions=INSTRUCTIONS)
 
 
-def _client() -> Khwan:
+# Whose credentials the CURRENT call runs under.
+#
+# On stdio the answer is the environment, because the process belongs to one
+# person: that is the whole shape of `uvx khwan-mcp` and it is why reading
+# os.environ once was correct. A shared HTTP server breaks that assumption and
+# nothing in the old code noticed — one cached client, built from process
+# environment on the first call, served every caller after it. That is a
+# cross-tenant leak by construction rather than by bug, so the context is set
+# per request by the transport and falls back to the environment when unset.
+_request_creds: contextvars.ContextVar[Optional[Dict[str, Any]]] = contextvars.ContextVar(
+    "khwan_request_creds", default=None
+)
+
+
+@contextmanager
+def request_credentials(api_key: str, *, core: Optional[str] = None,
+                        user: Optional[str] = None,
+                        base_url: Optional[str] = None) -> Iterator[None]:
+    """Run a block as one specific caller — for a transport serving many.
+
+    A ContextVar, not a global: each request in an asyncio server gets its own
+    copy, so concurrent callers cannot see each other's credentials even while
+    they interleave. Resets on exit, including when the body raises.
+    """
+    if not api_key:
+        raise ValueError("api_key is required")
+    creds: Dict[str, Any] = {"api_key": api_key}
+    if core:
+        creds["core"] = core
+    if user:
+        creds["user_id"] = user
+    if base_url:
+        creds["base_url"] = base_url
+    token = _request_creds.set(creds)
+    try:
+        yield
+    finally:
+        _request_creds.reset(token)
+
+
+def _creds() -> Dict[str, Any]:
+    """The credentials for this call: the request's, else the environment's."""
+    override = _request_creds.get()
+    if override is not None:
+        return override
     api_key = os.environ.get("KHWAN_API_KEY")
     if not api_key:
         raise RuntimeError(
             "KHWAN_API_KEY is not set — get one from your Khwan dashboard."
         )
-    kwargs: Dict[str, Any] = {"api_key": api_key}
+    creds: Dict[str, Any] = {"api_key": api_key}
     if os.environ.get("KHWAN_CORE"):
-        kwargs["core"] = os.environ["KHWAN_CORE"]
+        creds["core"] = os.environ["KHWAN_CORE"]
     if os.environ.get("KHWAN_USER"):
-        kwargs["user_id"] = os.environ["KHWAN_USER"]
+        creds["user_id"] = os.environ["KHWAN_USER"]
     if os.environ.get("KHWAN_BASE_URL"):
-        kwargs["base_url"] = os.environ["KHWAN_BASE_URL"]
-    return Khwan(**kwargs)
+        creds["base_url"] = os.environ["KHWAN_BASE_URL"]
+    return creds
 
 
-# One client per process, built lazily on first tool call — so the module stays
-# importable (tests, --help, tool discovery) without KHWAN_API_KEY set, but a
-# real call surfaces a clear error.
-_kw_cache: Optional[Khwan] = None
+# Clients are cached BY CREDENTIAL, never process-wide. Bounded and LRU because
+# the cache would otherwise grow one entry per caller and hold their keys for
+# the life of the process; on stdio it never exceeds one entry.
+_CLIENT_CACHE_MAX = 32
+_clients: "OrderedDict[Tuple[Tuple[str, Any], ...], Khwan]" = OrderedDict()
 
 
 def _kw() -> Khwan:
-    global _kw_cache
-    if _kw_cache is None:
-        _kw_cache = _client()
-    return _kw_cache
+    creds = _creds()
+    key = tuple(sorted(creds.items()))
+    hit = _clients.get(key)
+    if hit is not None:
+        _clients.move_to_end(key)
+        return hit
+    client = Khwan(**creds)
+    _clients[key] = client
+    _clients.move_to_end(key)
+    while len(_clients) > _CLIENT_CACHE_MAX:
+        _clients.popitem(last=False)
+    return client
 
 
 def _lessons(turn: Turn) -> List[str]:
