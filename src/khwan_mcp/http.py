@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import json
 import os
+from contextlib import asynccontextmanager
 from typing import Any, Callable, Dict, Optional, Tuple
 
 from .server import mcp, request_credentials
@@ -53,31 +54,34 @@ def _bearer(headers: list) -> Optional[str]:
     return None
 
 
-def _split_brain(path: str, inner: str) -> Tuple[Optional[str], Optional[str], str]:
-    """Read the brain segments, from a mounted OR a standalone path.
+def _split_brain(path: str, root_path: str, inner: str) -> Tuple[Optional[str], Optional[str], str]:
+    """Read the brain segments, and build the path the inner router will match.
 
-    Starlette's `Mount` strips its own prefix before the inner app is called, so
-    the same request arrives shaped two different ways depending on how this app
-    was wired:
+    `root_path` is the part of the URL a Mount has claimed. Starlette does NOT
+    remove it from `path` — it records it, and the child router matches
+    ``path[len(root_path):]`` against its own routes, so the target has to
+    include the prefix or it is stripped twice:
 
-        mounted at /mcp   →  "/acme/web"
-        standalone        →  "/mcp/acme/web"
+        mounted at /mcp, FastMCP serving /mcp
+            in   path="/mcp/acme/web"  root_path="/mcp"
+            out  path="/mcp/mcp"       → router sees "/mcp" → matches
 
-    Both must work, and getting it wrong is silent: the segments are simply not
-    seen, every install lands on the default brain, and nothing errors.
+        standalone
+            in   path="/mcp/acme/web"  root_path=""
+            out  path="/mcp"           → router sees "/mcp" → matches
 
-    Returns the core, the sub-brain, and the path to hand the inner app — which
-    is always `inner`, because FastMCP serves at its own fixed route regardless
-    of where this wrapper sits.
     """
-    rest = path
-    if rest == inner:
+    rel = path[len(root_path):] if root_path and path.startswith(root_path) else path
+    if rel == inner:
         rest = ""
-    elif rest.startswith(inner + "/"):
-        rest = rest[len(inner):]
+    elif rel.startswith(inner + "/"):
+        rest = rel[len(inner):]
+    else:
+        rest = rel
     rest = rest.strip("/")
+    target = root_path + inner
     if not rest:
-        return None, None, inner
+        return None, None, target
     parts = rest.split("/")
     if len(parts) > 2:
         # Deeper than we understand. Leave it intact for the inner app to
@@ -85,7 +89,7 @@ def _split_brain(path: str, inner: str) -> Tuple[Optional[str], Optional[str], s
         return None, None, path
     core = parts[0] or None
     user = parts[1] if len(parts) > 1 and parts[1] else None
-    return core, user, inner
+    return core, user, target
 
 
 async def _send_json(send: Callable, status: int, body: Dict[str, Any],
@@ -100,6 +104,42 @@ async def _send_json(send: Callable, status: int, body: Dict[str, Any],
     await send({"type": "http.response.body", "body": payload})
 
 
+def _allowed_hosts() -> Optional[list]:
+    """Hosts this server may be addressed as, for DNS-rebinding protection.
+
+    FastMCP ships that protection on, allowing only loopback — correct for a
+    server started by a local client, and a 421 for every request the moment the
+    thing is reachable at a real hostname. Turning the check off would be the
+    quick fix and the wrong one: it is what stops a page on another origin from
+    driving this endpoint through a victim's browser.
+
+    So widen it rather than disable it, from the resource identifier we already
+    configure — one source of truth for what this server calls itself.
+    """
+    explicit = [h.strip() for h in
+                (os.environ.get("KHWAN_MCP_ALLOWED_HOSTS") or "").split(",") if h.strip()]
+    if explicit:
+        return explicit
+    resource = (os.environ.get("KHWAN_MCP_RESOURCE") or "").strip()
+    if not resource:
+        return None
+    host = resource.split("://", 1)[-1].split("/", 1)[0]
+    return [host, f"{host}:*"] if host else None
+
+
+def _apply_transport_security() -> None:
+    hosts = _allowed_hosts()
+    if not hosts:
+        return
+    settings = mcp.settings.transport_security
+    for h in hosts:
+        if h not in settings.allowed_hosts:
+            settings.allowed_hosts.append(h)
+        origin = f"https://{h}"
+        if origin not in settings.allowed_origins:
+            settings.allowed_origins.append(origin)
+
+
 class BrainScopedMCP:
     """ASGI app: read the credential and the requested brain, then delegate.
 
@@ -109,10 +149,12 @@ class BrainScopedMCP:
     """
 
     def __init__(self, app: Optional[Callable] = None, *, inner_path: str = "/mcp") -> None:
-        self.app = app if app is not None else mcp.streamable_http_app()
-        # The route FastMCP itself serves. Not where this wrapper is mounted —
-        # those are different things, and conflating them is what broke the
-        # first deploy.
+        if app is None:
+            _apply_transport_security()
+            app = mcp.streamable_http_app()
+        self.app = app
+        # The route FastMCP itself serves — not where this wrapper is mounted.
+        # Those are different things; `root_path` carries the second one.
         self.inner_path = "/" + inner_path.strip("/")
 
     async def __call__(self, scope: dict, receive: Callable, send: Callable) -> None:
@@ -136,7 +178,8 @@ class BrainScopedMCP:
             )
             return
 
-        core, user, path = _split_brain(scope["path"], self.inner_path)
+        core, user, path = _split_brain(
+            scope["path"], scope.get("root_path") or "", self.inner_path)
         scope = {**scope, "path": path, "raw_path": path.encode()}
 
         # KHWAN_BASE_URL matters more here than on stdio. Mounted beside the
@@ -150,3 +193,29 @@ class BrainScopedMCP:
 def app(*, inner_path: str = "/mcp") -> BrainScopedMCP:
     """The ASGI app to mount, e.g. ``app.mount("/mcp", khwan_mcp.http.app())``."""
     return BrainScopedMCP(inner_path=inner_path)
+
+
+@asynccontextmanager
+async def session_lifespan():
+    """Run FastMCP's session manager for as long as the host app is up.
+
+    Starlette does not run the lifespan of a mounted sub-application. FastMCP's
+    Streamable HTTP handler needs one — without it every authenticated request
+    dies on `RuntimeError: Task group is not initialized`, which arrives as a
+    500 and says nothing about mounting.
+
+    So the host has to run this itself, alongside whatever lifespan it already
+    has:
+
+        prev = app.router.lifespan_context
+
+        @asynccontextmanager
+        async def lifespan(app):
+            async with prev(app):
+                async with session_lifespan():
+                    yield
+
+        app.router.lifespan_context = lifespan
+    """
+    async with mcp.session_manager.run():
+        yield
