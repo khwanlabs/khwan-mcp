@@ -214,6 +214,16 @@ def _fail(op: str, e: KhwanError) -> RuntimeError:
             f"small for this workload — a larger plan at {UPGRADE_URL} raises it."
         )
     if e.status in (401, 403):
+        # Which credential this call carried decides what the user should do,
+        # and getting it wrong sends them somewhere with nothing to fix. A
+        # remote caller authenticated with OAuth has no KHWAN_API_KEY anywhere.
+        if "bearer_token" in (_request_creds.get() or {}):
+            return RuntimeError(
+                f"khwan {op} failed ({e.status}): {detail}. The OAuth token was "
+                f"rejected — most often it has expired. Do not retry; tell the "
+                f"user to authorize this server again. There is no API key "
+                f"involved on this connection, so do not send them looking for one."
+            )
         return RuntimeError(
             f"khwan {op} failed ({e.status}): {detail}. The credential is missing "
             f"or rejected — this server reads KHWAN_API_KEY from its environment. "
