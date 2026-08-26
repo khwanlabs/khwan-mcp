@@ -144,3 +144,56 @@ def test_all_six_tools_still_register():
         "khwan_prepare", "khwan_record", "khwan_recall",
         "khwan_remember", "khwan_memory", "khwan_cores",
     ]
+
+
+# ── tools must not hold the event loop ────────────────────────────────────────
+# FastMCP invokes a sync tool function directly — `return fn(**args)`, no
+# thread — so a blocking tool freezes everything sharing the process: other
+# callers, the health check, and the API the call is waiting on when that API is
+# the same process. Harmless on stdio, fatal on a shared server.
+
+def test_every_tool_is_async():
+    """The structural guard. A `def` tool added later re-introduces the freeze."""
+    import inspect
+    for name in ("khwan_prepare", "khwan_record", "khwan_recall",
+                 "khwan_remember", "khwan_memory", "khwan_cores"):
+        fn = getattr(server, name)
+        assert inspect.iscoroutinefunction(fn), f"{name} must be async"
+
+
+def test_blocking_work_leaves_the_loop_free():
+    """The behavioural one: a slow call must not stall a concurrent task."""
+    import threading
+    import time
+
+    ticks = []
+
+    def slow():
+        time.sleep(0.15)
+        return threading.get_ident()
+
+    async def ticker():
+        for _ in range(10):
+            ticks.append(1)
+            await asyncio.sleep(0.01)
+
+    async def main():
+        loop_thread = threading.get_ident()
+        worker, _ = await asyncio.gather(server._off_loop(slow), ticker())
+        return loop_thread, worker
+
+    loop_thread, worker = asyncio.run(main())
+    assert worker != loop_thread          # ran somewhere else
+    assert len(ticks) == 10               # and the loop kept going meanwhile
+
+
+def test_the_caller_survives_the_thread_hop():
+    """Credentials are a ContextVar; the worker thread must still see them."""
+    def read_key():
+        return server._creds()["bearer_token"]
+
+    async def main():
+        with server.request_credentials(bearer_token="tok_alice"):
+            return await server._off_loop(read_key)
+
+    assert asyncio.run(main()) == "tok_alice"

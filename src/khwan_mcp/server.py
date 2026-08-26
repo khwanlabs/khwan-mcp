@@ -26,6 +26,8 @@ from __future__ import annotations
 
 import contextvars
 import os
+
+import anyio
 from collections import OrderedDict
 from contextlib import contextmanager
 from typing import Any, Dict, Iterator, List, Optional, Tuple
@@ -186,6 +188,17 @@ def _fail(op: str, e: KhwanError) -> RuntimeError:
     reaches this layer. Better to say "wait" than to invent a figure.
     """
     detail = str(e).strip().rstrip(".")
+    if e.status == 0:
+        # Never reached the API at all — a transport or configuration problem,
+        # not an auth or plan one. Worth naming, because `failed (0)` next to a
+        # requests traceback reads like the memory service rejected something.
+        return RuntimeError(
+            f"khwan {op} failed: could not reach the Khwan API at all — {detail}. "
+            f"Nothing was sent, so this is not about the credential or the plan. "
+            f"KHWAN_BASE_URL may point somewhere wrong, or the API is "
+            f"unreachable from here. Tell the user; retrying will not help until "
+            f"that changes."
+        )
     if e.status == 402:
         return RuntimeError(
             f"khwan {op} failed (402): {detail}. This is a PLAN LIMIT, not a "
@@ -216,8 +229,23 @@ def _fail(op: str, e: KhwanError) -> RuntimeError:
     return RuntimeError(f"khwan {op} failed ({e.status}): {detail}.")
 
 
+async def _off_loop(fn, *args):
+    """Run a blocking call in a worker thread instead of on the event loop.
+
+    FastMCP invokes a sync tool function DIRECTLY — `return fn(**args)`, no
+    thread — so a tool that does blocking I/O holds the loop for the whole
+    request. On stdio that only ever delayed the one person the process belongs
+    to. On a shared HTTP server it stops everything: other callers, the health
+    check, and the very API this call is waiting on when it is the process next
+    door.
+
+    Every tool is therefore `async def` and does its work here.
+    """
+    return await anyio.to_thread.run_sync(fn, *args)
+
+
 @mcp.tool()
-def khwan_prepare(input: str) -> Dict[str, Any]:
+async def khwan_prepare(input: str) -> Dict[str, Any]:
     """Pull the memory-enriched context for a turn BEFORE you answer.
 
     Khwan builds context from memory + the brain's constitution + a coherence
@@ -236,7 +264,7 @@ def khwan_prepare(input: str) -> Dict[str, Any]:
         turn_token: opaque token — pass it verbatim to khwan_record.
     """
     try:
-        turn = _kw().prepare(input)
+        turn = await _off_loop(lambda: _kw().prepare(input))
     except KhwanError as e:
         raise _fail("prepare", e) from e
     return {
@@ -251,7 +279,7 @@ def khwan_prepare(input: str) -> Dict[str, Any]:
 
 
 @mcp.tool()
-def khwan_record(turn_token: str, answer: str) -> Dict[str, Any]:
+async def khwan_record(turn_token: str, answer: str) -> Dict[str, Any]:
     """Hand your answer back to Khwan AFTER you reply, so it persists + learns.
 
     Args:
@@ -263,13 +291,13 @@ def khwan_record(turn_token: str, answer: str) -> Dict[str, Any]:
     """
     try:
         # The hosted client reads turn_token off a Turn; we only need the token.
-        return _kw().record(Turn({"turn_token": turn_token}), answer)
+        return await _off_loop(lambda: _kw().record(Turn({"turn_token": turn_token}), answer))
     except KhwanError as e:
         raise _fail("record", e) from e
 
 
 @mcp.tool()
-def khwan_recall(query: str, limit: int = 3) -> Dict[str, Any]:
+async def khwan_recall(query: str, limit: int = 3) -> Dict[str, Any]:
     """SEED a session/subagent with a COMPACT, bounded set of relevant memories.
 
     The token-smart entry point for a caching host (Claude Code, Claude Desktop):
@@ -305,7 +333,7 @@ def khwan_recall(query: str, limit: int = 3) -> Dict[str, Any]:
         seed_text: a ready-to-drop-in memory block for a subagent's brief ("" if none).
     """
     try:
-        turn = _kw().prepare(query)
+        turn = await _off_loop(lambda: _kw().prepare(query))
     except KhwanError as e:
         raise _fail("recall", e) from e
     facts: List[Dict[str, Any]] = []
@@ -331,7 +359,7 @@ def khwan_recall(query: str, limit: int = 3) -> Dict[str, Any]:
 
 
 @mcp.tool()
-def khwan_remember(fact: str) -> Dict[str, Any]:
+async def khwan_remember(fact: str) -> Dict[str, Any]:
     """Persist a durable fact/preference so FUTURE sessions can recall it.
 
     A convenience over the prepare→record loop for the common "just remember this"
@@ -356,10 +384,12 @@ def khwan_remember(fact: str) -> Dict[str, Any]:
     """
     kw = _kw()
     try:
-        turn = kw.prepare(fact)
+        turn = await _off_loop(lambda: kw.prepare(fact))
         if not turn.turn_token:
             return {"stored": False, "reason": turn.reason or "brain gate declined the turn"}
-        kw.record(turn, fact)
+        # Two calls, two hops off the loop. Keeping them separate matters: the
+        # gate above decides whether the second one happens at all.
+        await _off_loop(lambda: kw.record(turn, fact))
     except KhwanError as e:
         raise _fail("remember", e) from e
     return {"stored": True, "contradicted_memory": bool(turn._d.get("contradiction"))
@@ -367,7 +397,7 @@ def khwan_remember(fact: str) -> Dict[str, Any]:
 
 
 @mcp.tool()
-def khwan_memory(limit: int = 20) -> Dict[str, Any]:
+async def khwan_memory(limit: int = 20) -> Dict[str, Any]:
     """Inspect what this brain currently remembers, newest first.
 
     A DEBUGGING window on the brain, not a way to seed a session. It returns
@@ -387,20 +417,20 @@ def khwan_memory(limit: int = 20) -> Dict[str, Any]:
         The brain's recent memory entries, in the order they were written.
     """
     try:
-        return _kw().memory(limit)
+        return await _off_loop(lambda: _kw().memory(limit))
     except KhwanError as e:
         raise _fail("memory", e) from e
 
 
 @mcp.tool()
-def khwan_cores() -> List[Any]:
+async def khwan_cores() -> List[Any]:
     """List the isolated cores (brains) available on this account.
 
     Each core is a fully isolated brain (own memory/identity/learning). Select
     one for the session via the ``KHWAN_CORE`` environment variable.
     """
     try:
-        result = _kw().cores()
+        result = await _off_loop(lambda: _kw().cores())
     except KhwanError as e:
         raise _fail("cores", e) from e
     # /cores may return a bare list or {"cores": [...]}; normalize to a list.
