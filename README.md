@@ -98,14 +98,35 @@ a pasted key. Anyone else on the team writes their own `~/.khwan/env`.
 Memory is only useful if the right project's memory comes back. Two axes, and
 both give **complete** isolation:
 
-| | selected by | costs |
-|---|---|---|
-| **core** | `KHWAN_CORE` | one of your plan's cores |
-| **sub-brain** | `KHWAN_USER` (with a core) | nothing — unlimited on paid plans |
+| | selected by | free | paid |
+|---|---|---|---|
+| **core** | `KHWAN_CORE` | 1 — `default` only | 5 (starter) → 25 (pro) |
+| **sub-brain** | `KHWAN_USER` | **3** | unlimited |
 
-A sub-brain is a full separate brain, not a filter: `account::acme::@Web` shares
-nothing with `account::acme::@Api`. So a client with several repositories can be
-one core with a sub-brain each, rather than a core each:
+A sub-brain is a full separate brain, not a filter: `account::@web` shares
+nothing with `account::@api`. So the two axes multiply, and **a free account
+already holds four isolated brains** — the core on its own, plus three
+sub-brains:
+
+```
+account              default core, no KHWAN_USER      brain 1
+account::@web        KHWAN_USER=web                   brain 2
+account::@api        KHWAN_USER=api                   brain 3
+account::@docs       KHWAN_USER=docs                  brain 4
+```
+
+Which means one-brain-per-project works on the free plan, for up to four
+projects — **and it needs no `KHWAN_CORE` at all**:
+
+```bash
+# in ~/code/web
+claude mcp add khwan --scope project -e KHWAN_USER=web -- ~/.khwan/khwan-mcp
+# in ~/code/api
+claude mcp add khwan --scope project -e KHWAN_USER=api -- ~/.khwan/khwan-mcp
+```
+
+Named cores are the paid axis. Reach for one when four brains stop being
+enough, or when you want them grouped per client rather than per repository:
 
 ```bash
 # in ~/code/acme-web
@@ -114,8 +135,12 @@ claude mcp add khwan --scope project -e KHWAN_CORE=acme -e KHWAN_USER=Web -- ~/.
 claude mcp add khwan --scope project -e KHWAN_CORE=acme -e KHWAN_USER=Api -- ~/.khwan/khwan-mcp
 ```
 
-Cores must exist before you point at one — an unknown core answers 404. Create
-them in the dashboard. Sub-brains are created on first write.
+Two things to know before you point `KHWAN_CORE` anywhere. **A core must exist
+first** — an unknown slug answers `404`, not "created it for you" — and they are
+created in the dashboard. **On the free plan there is nothing to point at**: the
+cap of one is spent on `default`, so creating a named core answers `402`. Leave
+`KHWAN_CORE` unset there and use `KHWAN_USER`. Sub-brains, by contrast, are
+created on first write.
 
 ### Recommended pattern (token-smart)
 
@@ -171,8 +196,8 @@ there is no per-project switch here, so choose a broad one.
 | Var              | Required | Purpose                                                              |
 | ---------------- | -------- | ------------------------------------------------------------------- |
 | `KHWAN_API_KEY`  | yes      | Your key from the Khwan dashboard (`kwk_live_…`).                    |
-| `KHWAN_CORE`     | no       | Select an isolated core/brain (default: the account's default core).|
-| `KHWAN_USER`     | no       | Isolated sub-brain per end-user (paid); sets `X-Khwan-User`.         |
+| `KHWAN_CORE`     | no       | Select a named core. Paid plans only — free has just `default`.     |
+| `KHWAN_USER`     | no       | A separate brain inside the core — 3 on free, unlimited on paid.    |
 | `KHWAN_BASE_URL` | no       | Override the API base — e.g. `http://127.0.0.1:8010` for a local engine. |
 
 ## Tools
