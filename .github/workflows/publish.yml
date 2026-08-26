@@ -28,11 +28,12 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.13"
-      - run: pip install -e . build twine
+      - run: pip install -e . build twine pytest
       # The same checks build.yml runs on every push. 0.2.1 shipped an artifact
       # that could not start, past a green build, because the check only imported
       # __init__.py — so the server module and its tool list are what get checked.
       - run: python -c "import khwan_mcp.server as s; print('server ok:', s.mcp.name)"
+      - run: python -m pytest -q
       - name: the tools the client will see
         run: |
           python - <<'PY'

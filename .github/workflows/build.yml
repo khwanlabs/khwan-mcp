@@ -5,9 +5,8 @@ on:
     branches: [main]
   pull_request:
 
-# There are no unit tests here yet, so this checks what can honestly be checked:
-# the package imports on every Python it claims to support, and it builds into
-# something twine will accept. The second one is not hypothetical — the 0.2.1
+# Checks the package imports on every Python it claims to support, runs the
+# suite, and builds into something twine will accept. The second one is not hypothetical — the 0.2.1
 # release failed on Metadata-Version 2.5, with an error naming metadata when the
 # cause was the build backend.
 jobs:
@@ -23,12 +22,13 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
-      - run: pip install -e . build twine
+      - run: pip install -e . build twine pytest
       # Importing the PACKAGE only touches __init__.py, so the 0.2.1 breakage
       # (mcp 2.0 dropped mcp.server.fastmcp) sailed past a green build. Import the
       # SERVER module and build the tool list — that is what `uvx khwan-mcp` does.
       - run: python -c "import khwan_mcp; print(khwan_mcp.__version__)"
       - run: python -c "import khwan_mcp.server as s; print('server ok:', s.mcp.name)"
+      - run: python -m pytest -q
       - name: the tools the client will see
         run: |
           python - <<'EOF'
