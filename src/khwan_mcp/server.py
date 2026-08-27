@@ -236,10 +236,13 @@ def _fail(op: str, e: KhwanError) -> RuntimeError:
         )
     if e.status == 404:
         return RuntimeError(
-            f"khwan {op} failed (404): {detail}. Usually KHWAN_CORE names a core "
-            f"that does not exist: cores are created in the dashboard, and the "
-            f"free plan has only `default`. Do not retry; tell the user, who can "
-            f"add cores at {UPGRADE_URL}."
+            f"khwan {op} failed (404): {detail}. Usually the selected core does "
+            f"not exist. Which knob selected it depends on the transport: over "
+            f"stdio it is the KHWAN_CORE environment variable; over a remote URL "
+            f"it is the path, /mcp/{{core}}/{{user}} — KHWAN_CORE is ignored "
+            f"there. Cores are created in the dashboard and the free plan has "
+            f"only `default`. Do not retry; tell the user, who can add cores at "
+            f"{UPGRADE_URL}."
         )
     return RuntimeError(f"khwan {op} failed ({e.status}): {detail}.")
 
@@ -441,8 +444,21 @@ async def khwan_memory(limit: int = 20) -> Dict[str, Any]:
 async def khwan_cores() -> List[Any]:
     """List the isolated cores (brains) available on this account.
 
-    Each core is a fully isolated brain (own memory/identity/learning). Select
-    one for the session via the ``KHWAN_CORE`` environment variable.
+    Each core is a fully isolated brain — its own memory, identity and learning.
+
+    HOW A CORE IS SELECTED DEPENDS ON HOW YOU CONNECTED, and the two are not
+    interchangeable:
+
+    * **stdio** (this package run locally): the ``KHWAN_CORE`` environment
+      variable, read once at startup. Changing it needs a restart.
+    * **remote** (a hosted URL): the path — ``/mcp/{core}/{user}``. The path
+      asks, the token answers. ``KHWAN_CORE`` does NOTHING here; setting it and
+      expecting the brain to change is a silent no-op.
+
+    On a remote connection, do not advise ``KHWAN_CORE``. To reach a different
+    brain, point the client at a different URL — usually by adding a second MCP
+    server entry for it, so each keeps its own credentials and no re-auth is
+    needed to switch.
     """
     try:
         result = await _off_loop(lambda: _kw().cores())
