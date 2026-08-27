@@ -2,9 +2,14 @@
 
 Exposes Khwan's pure memory loop — ``prepare`` → (your model) → ``record`` — as
 MCP tools, so any MCP client (Claude Code, Claude Desktop, …) gains a
-persistent, *learning* memory. Khwan never runs a model: **the connected client
-IS the model.** In Claude Code that means Claude itself is the "your model" step
-of the loop.
+persistent, *learning* memory. Khwan never runs *your* model: **the connected
+client IS the model.** In Claude Code that means Claude itself is the "your
+model" step of the loop.
+
+Do not widen this to "Khwan never runs a model" — that is false. The read and
+write paths make no inference calls, but a scheduled nightly pass distils stored
+turns into lessons via an LLM. "your model" is the claim that is true, and it is
+the only one that belongs in user-facing text.
 
 The loop, as MCP tools:
 
