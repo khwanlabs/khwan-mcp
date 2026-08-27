@@ -4,11 +4,18 @@
 server that plugs [Khwan](https://khwan.ai) — a pure AI-memory layer — into
 Claude Code, Claude Desktop, or any MCP client.
 
-Khwan never runs a model. **The client is the model.** Its job is to persist and
-distil what matters into a brain you can **recall in a later session or seed a
+Khwan never runs *your* model. **The client is the model.** Its job is to persist
+and distil what matters into a brain you can **recall in a later session or seed a
 subagent with** — a compact, bounded set of facts instead of a replayed
 transcript. One account can hold many isolated **cores** (brains), and — on paid
 plans — an isolated sub-brain per end-user.
+
+Nothing on the read or write path costs you an inference call: `khwan_recall` and
+`khwan_remember` make none. Khwan does run one model of its own, on a schedule —
+a nightly pass that distils stored turns into standing lessons. A real production
+run was 8 brains and 245 stored turns distilled into 11 lessons, for **$0.0094**.
+That pass is Khwan's cost, not yours, and it is the whole difference from memory
+layers that compress, graph, or consolidate on every turn.
 
 <!-- The MCP Registry verifies ownership of a PyPI package by finding this
      name in the package README, which is what PyPI shows as the description.
